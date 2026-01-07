@@ -19,20 +19,29 @@ const schema = defineSchema({
 const db = createClient({ schema });
 
 async function main() {
-  console.log("--- Running Mock Insert ---");
-
-  // TRY THIS: Type 'db.' -> You should see 'posts'
-  // TRY THIS: Type 'insert({ ... })' -> You should see 'title', 'isPublished', 'content'
-  const result = await db.posts.insert({
-    title: "Rust is Memory Safe",
+  // 1. Insert (as before)
+  await db.posts.insert({
+    title: "Rust Guide",
     isPublished: true,
-    content: "# Hello World\nThis is a test.",
+    content: "Rust is fast.",
   });
 
-  // Try uncommenting this error to see strict typing in action:
-  // await db.posts.insert({ title: 123 }); // Error: Type 'number' is not assignable to type 'string'
+  // 2. Search
+  console.log("\n--- Running Mock Search ---");
 
-  console.log("Result:", result);
+  const results = await db.posts.search("Is Rust fast?", { limit: 5 });
+
+  // 3. Verify Type Safety on Results
+  if (results.length > 0) {
+    const doc = results[0];
+
+    // TypeScript knows these exist:
+    console.log(doc.title); // string
+    console.log(doc._score); // number
+
+    // TypeScript knows this DOES NOT exist:
+    // console.log(doc.random); // Error!
+  }
 }
 
 main();

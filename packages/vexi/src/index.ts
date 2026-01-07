@@ -98,13 +98,25 @@ export type InferSchema<S extends VSchema<any>> = {
   [K in keyof S["tables"]]: InferDoc<S["tables"][K]>;
 };
 
+// 1. Define what a Search Result looks like
+// It is the intersection (&) of the Document Type and our system metadata
+export type SearchResult<T extends VTable<any>> = InferDoc<T> & {
+  _score: number; // Cosine similarity (0 to 1)
+  _match_text?: string; // The specific chunk that matched (optional)
+};
+
+// 2. Define Search Options
+export interface SearchOptions {
+  limit?: number; // Defaults to 10
+  // In the future, we will add advanced filters here:
+  // filter?: { ... }
+}
+
 // 1. The interface for a single table client (e.g., db.posts)
 // We use generic <T> to know WHICH table we are talking about
 export interface TableClient<T extends VTable<any>> {
   insert(data: InferDoc<T>): Promise<{ id: string }>;
-
-  // We'll implement search in the next step
-  // search(query: string): Promise<any>;
+  search(query: string, options?: SearchOptions): Promise<SearchResult<T>[]>;
 }
 
 // 2. The interface for the Database Client
@@ -138,6 +150,17 @@ export function createClient<S extends VSchema<any>>(
 
           // Mock response
           return { id: "mock-uuid-" + Date.now() };
+        },
+
+        search: async (query: string, options?: SearchOptions) => {
+          console.log(`[SDK] Mocking SEARCH on table: "${tableName}"`);
+          console.log(`[SDK] Query: "${query}"`);
+          console.log(`[SDK] Options:`, options);
+
+          // Mock return value
+          // We return an empty array for now, cast as the correct type
+          // so TypeScript allows it.
+          return [] as any;
         },
       };
     },
