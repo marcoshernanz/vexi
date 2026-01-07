@@ -1,4 +1,20 @@
-// packages/vexi/src/index.ts
+// 1. Configuration Types
+export type EmbeddingModel =
+  | "openai/text-embedding-3-small"
+  | "openai/text-embedding-3-large"
+  | "cohere/embed-english-v3.0"
+  | (string & {}); // Allows custom strings while keeping autocomplete
+
+export type ChunkingStrategy =
+  | "recursive-markdown"
+  | "paragraph"
+  | "sentence"
+  | (string & {});
+
+export interface EmbedConfig {
+  model: EmbeddingModel;
+  strategy: ChunkingStrategy;
+}
 
 // --- 1. The Data Types ---
 
@@ -19,9 +35,26 @@ export class VBoolean extends VType<boolean> {
   _type = "boolean" as const;
 }
 
+export class VText extends VType<string> {
+  _type = "text" as const;
+
+  // Internal metadata storage
+  // We make it public/optional so the SDK builder can read it later
+  public _embedConfig?: EmbedConfig;
+
+  /**
+   * Marks this field to be automatically embedded by the vector database.
+   */
+  embed(config: EmbedConfig) {
+    this._embedConfig = config;
+    return this; // Return 'this' to allow chaining
+  }
+}
+
 export const v = {
   string: () => new VString(),
   boolean: () => new VBoolean(),
+  text: () => new VText(),
 };
 
 // --- 2. The Structural Definitions ---
