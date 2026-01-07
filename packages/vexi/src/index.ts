@@ -97,3 +97,49 @@ export type InferDoc<T extends VTable<any>> = {
 export type InferSchema<S extends VSchema<any>> = {
   [K in keyof S["tables"]]: InferDoc<S["tables"][K]>;
 };
+
+// 1. The interface for a single table client (e.g., db.posts)
+// We use generic <T> to know WHICH table we are talking about
+export interface TableClient<T extends VTable<any>> {
+  insert(data: InferDoc<T>): Promise<{ id: string }>;
+
+  // We'll implement search in the next step
+  // search(query: string): Promise<any>;
+}
+
+// 2. The interface for the Database Client
+// It maps every key in the Schema (e.g., "posts") to a TableClient
+export type VexiClient<S extends VSchema<any>> = {
+  [K in keyof S["tables"]]: TableClient<S["tables"][K]>;
+};
+
+// 3. Configuration options
+export interface ClientConfig<S extends VSchema<any>> {
+  schema: S;
+  apiKey?: string; // Optional for now
+  apiUrl?: string; // Optional, defaults to cloud
+}
+
+export function createClient<S extends VSchema<any>>(
+  config: ClientConfig<S>
+): VexiClient<S> {
+  // We return a Proxy that masquerades as the VexiClient type
+  return new Proxy({} as VexiClient<S>, {
+    get: (_target, tableName: string) => {
+      // Logic: The user accessed db[tableName] (e.g., db.posts)
+
+      // Return the TableClient object
+      return {
+        insert: async (data: any) => {
+          // This is where the runtime magic happens.
+          // In the real version, this will fetch() to your Node API.
+          console.log(`[SDK] Mocking INSERT into table: "${tableName}"`);
+          console.log(`[SDK] Data Payload:`, JSON.stringify(data, null, 2));
+
+          // Mock response
+          return { id: "mock-uuid-" + Date.now() };
+        },
+      };
+    },
+  });
+}
