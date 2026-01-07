@@ -1,20 +1,25 @@
-import { v, defineTable, defineSchema } from "./src/index";
+// playground.ts
+import { v, defineTable, defineSchema, type InferDoc } from "./src/index";
 
-// 1. Define a Table
+// 1. Define
 const posts = defineTable({
   title: v.string(),
   isPublished: v.boolean(),
 });
 
-const users = defineTable({
-  username: v.string(),
-});
-
-// 2. Define the Schema
 export const schema = defineSchema({
   posts: posts,
-  users: users,
 });
 
-// 3. Inspect
-console.log(JSON.stringify(schema, null, 2));
+// 2. The Type Inference Magic
+// Hover over 'Post' to see: { title: string; isPublished: boolean }
+type Post = InferDoc<typeof posts>;
+
+// 3. Test it
+const myData: Post = {
+  title: "Systems Engineering",
+  isPublished: true,
+  // isPublished: "yes" // <--- This would now throw a Red Squiggly line!
+};
+
+console.log("Type check passed!");
