@@ -135,32 +135,47 @@ export interface ClientConfig<S extends VSchema<any>> {
 export function createClient<S extends VSchema<any>>(
   config: ClientConfig<S>
 ): VexiClient<S> {
-  // We return a Proxy that masquerades as the VexiClient type
+  const apiUrl = config.apiUrl || "http://localhost:3000";
+
   return new Proxy({} as VexiClient<S>, {
     get: (_target, tableName: string) => {
-      // Logic: The user accessed db[tableName] (e.g., db.posts)
+      // Look up schema definition to find embedding config
+      // We need to know WHICH field is the text field
+      const tableDef = config.schema.tables[tableName];
+      let embedConfig = null;
 
-      // Return the TableClient object
+      // Simple scan to find the first field with .embed() called on it
+      for (const [key, value] of Object.entries(tableDef.shape)) {
+        if ((value as any)._embedConfig) {
+          embedConfig = {
+            field: key,
+            ...(value as any)._embedConfig,
+          };
+          break;
+        }
+      }
+
       return {
         insert: async (data: any) => {
-          // This is where the runtime magic happens.
-          // In the real version, this will fetch() to your Node API.
-          console.log(`[SDK] Mocking INSERT into table: "${tableName}"`);
-          console.log(`[SDK] Data Payload:`, JSON.stringify(data, null, 2));
-
-          // Mock response
-          return { id: "mock-uuid-" + Date.now() };
+          const res = await fetch(`${apiUrl}/insert`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tableName,
+              data,
+              embedConfig, // Send config so API knows what to do
+            }),
+          });
+          return res.json();
         },
 
         search: async (query: string, options?: SearchOptions) => {
-          console.log(`[SDK] Mocking SEARCH on table: "${tableName}"`);
-          console.log(`[SDK] Query: "${query}"`);
-          console.log(`[SDK] Options:`, options);
-
-          // Mock return value
-          // We return an empty array for now, cast as the correct type
-          // so TypeScript allows it.
-          return [] as any;
+          const res = await fetch(`${apiUrl}/search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tableName, query, limit: options?.limit }),
+          });
+          return res.json();
         },
       };
     },
