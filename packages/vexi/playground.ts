@@ -1,5 +1,4 @@
 import { v, defineTable, defineSchema, createClient } from "./src/index";
-import { InferDoc } from "./src/schema";
 
 const posts = defineTable({
   title: v.string(),
@@ -16,18 +15,7 @@ const schema = defineSchema({
 
 const db = createClient({ schema });
 
-type Post = InferDoc<typeof posts>;
-// type Post = { title: string; isPublished: boolean; content: string };
-
 async function main() {
-  const post: Post = {
-    title: "Hello World",
-  };
-
-  await db.posts.insert({
-    title: "Rust Guide",
-  });
-
   await db.posts.insert({
     title: "Rust Guide",
     isPublished: true,
