@@ -54,7 +54,8 @@ export type InferDoc<T extends VTable<any>> =
   // Required properties
   {
     [K in RequiredKeys<ShapeOf<T>>]: InferOutput<ShapeOf<T>[K]>;
-  } & { // Optional properties (when output includes undefined)
+  } & {
+    // Optional properties (when output includes undefined)
     [K in OptionalKeys<ShapeOf<T>>]?: Exclude<
       InferOutput<ShapeOf<T>[K]>,
       undefined
