@@ -37,6 +37,8 @@ type TablesOf<S extends VSchema<any>> = S extends VSchema<infer Tables>
   ? Tables
   : never;
 
+type Prettify<T> = { [K in keyof T]: T[K] };
+
 type IsOptionalField<T extends VType<any>> =
   | (T extends VOptional<any> ? true : false)
   | (T extends VNullable<infer Inner> ? IsOptionalField<Inner> : false);
@@ -54,17 +56,18 @@ type RequiredKeys<Shape extends TableShape> = Exclude<
  * Takes a Table Definition and returns the TypeScript Interface for a document.
  * Example: InferDoc<typeof posts> -> { title: string; isPublished: boolean }
  */
-export type InferDoc<T extends VTable<any>> =
+export type InferDoc<T extends VTable<any>> = Prettify<
   // Required properties
   {
     [K in RequiredKeys<ShapeOf<T>>]: InferOutput<ShapeOf<T>[K]>;
-  } & {
-    // Optional properties (when output includes undefined)
+  } & // Optional properties
+  {
     [K in OptionalKeys<ShapeOf<T>>]?: Exclude<
       InferOutput<ShapeOf<T>[K]>,
       undefined
     >;
-  };
+  }
+>;
 
 /**
  * Takes a Schema Definition and returns the full database shape.
