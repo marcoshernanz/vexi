@@ -1,4 +1,4 @@
-import type { InferOutput, VType } from "./fields";
+import type { InferOutput, VNullable, VOptional, VType } from "./fields";
 
 export type TableShape = Record<string, VType<any>>;
 
@@ -37,8 +37,12 @@ type TablesOf<S extends VSchema<any>> = S extends VSchema<infer Tables>
   ? Tables
   : never;
 
+type IsOptionalField<T extends VType<any>> =
+  | (T extends VOptional<any> ? true : false)
+  | (T extends VNullable<infer Inner> ? IsOptionalField<Inner> : false);
+
 type OptionalKeys<Shape extends TableShape> = {
-  [K in keyof Shape]-?: undefined extends InferOutput<Shape[K]> ? K : never;
+  [K in keyof Shape]-?: IsOptionalField<Shape[K]> extends true ? K : never;
 }[keyof Shape];
 
 type RequiredKeys<Shape extends TableShape> = Exclude<
