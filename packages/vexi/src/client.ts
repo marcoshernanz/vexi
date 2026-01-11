@@ -7,12 +7,7 @@ export interface InsertResult {
   status: "queued" | (string & {});
 }
 
-export interface SearchResult<T extends VTable<any>> {
-  _score?: number;
-  _match_text?: string;
-  _id?: string;
-  [key: string]: any;
-}
+export type SearchResult<T extends VTable<any>> = InferDoc<T>;
 
 export interface SearchOptions {
   limit?: number;
@@ -104,12 +99,17 @@ export function createClient<S extends VSchema<any>>(
         );
       },
       search: async (query: string, options?: SearchOptions) => {
-        return postJson(
+        const results = await postJson<any[]>(
           fetcher,
           `${apiUrl}/search`,
           { tableName, query, limit: options?.limit },
           headers
         );
+
+        return results.map((result) => {
+          const { _id, _score, _match_text, ...rest } = result;
+          return rest;
+        });
       },
     };
   }

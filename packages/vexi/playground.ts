@@ -34,13 +34,6 @@ async function main() {
   });
 
   const results = await db.table.search("Is Rust fast?", { limit: 5 });
-
-  /*
-
-  results should be of type Table[]
-  Without any _id, _score, _match_text fields
-
-  */
 }
 
 main();
