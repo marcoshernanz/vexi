@@ -29,17 +29,25 @@ app.post("/insert", async (req, reply) => {
   const id = randomUUID();
 
   // B. Transactional Write to Postgres
-  // We save the raw JSON immediately. If Redis fails, we still have the data.
-  await db.query(
-    "INSERT INTO documents (id, table_name, data) VALUES ($1, $2, $3)",
-    [id, tableName, data]
-  );
+  // Construct dynamic INSERT statement for the specific table
+  const colNames = Object.keys(data).map((key) => `"${key}"`);
+  const colValues = Object.values(data);
+  const placeholders = colValues.map((_, i) => `$${i + 2}`); // Start at $2 ($1 is id)
+
+  const sql = `
+    INSERT INTO "${tableName}" ("_id", ${colNames.join(", ")}) 
+    VALUES ($1, ${placeholders.join(", ")})
+  `;
+
+  await db.query(sql, [id, ...colValues]);
 
   // C. Dispatch Job to Rust
   // Only push to queue if the schema has embedding enabled for a field
   if (embedConfig) {
     const jobPayload = JSON.stringify({
       document_id: id,
+      tableName,
+      vectorField: `${embedConfig.field}_embedding`,
       content: data[embedConfig.field], // Extract the text to embed
       model: embedConfig.model,
       chunk_strategy: embedConfig.strategy,
@@ -56,15 +64,14 @@ app.post("/insert", async (req, reply) => {
 app.post("/search", async (req, reply) => {
   const { tableName, query, limit } = req.body as any;
 
-  // TODO: In Phase 5, we will add query embedding here.
-  // For now, we will just return raw documents to prove the connection works.
+  // TODO: Phase 5 - Add vector search using:
+  // ORDER BY embedding <=> $1 LIMIT $2
 
-  const result = await db.query(
-    "SELECT data FROM documents WHERE table_name = $1 LIMIT $2",
-    [tableName, limit || 10]
-  );
+  const result = await db.query(`SELECT * FROM "${tableName}" LIMIT $1`, [
+    limit || 10,
+  ]);
 
-  return result.rows.map((row) => row.data);
+  return result.rows;
 });
 
 // --- STARTUP ---

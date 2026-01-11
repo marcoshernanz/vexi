@@ -6,13 +6,14 @@ use rig::{embeddings::EmbeddingsBuilder, providers::openai};
 use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
-use text_splitter::TextSplitter;
 use uuid::Uuid;
 
 // The Job Payload matching what Node.js sends
 #[derive(Deserialize, Debug)]
 struct JobPayload {
     document_id: Uuid,
+    tableName: String,
+    vectorField: String,
     content: String,
     model: String,
 }
@@ -59,57 +60,42 @@ async fn main() -> Result<()> {
 async fn process_job(json_str: &str, pool: &sqlx::PgPool, openai: &openai::Client) -> Result<()> {
     // A. Parse
     let job: JobPayload = serde_json::from_str(json_str)?;
-    println!("Processing Doc ID: {}", job.document_id);
+    println!(
+        "Processing Doc ID: {} for table {}",
+        job.document_id, job.tableName
+    );
 
-    // B. Chunk
-    // We trim chunks to fit context windows efficiently
-    let splitter = TextSplitter::default().with_trim_chunks(true);
-    let chunks: Vec<&str> = splitter.chunks(&job.content, 500).collect();
-    println!("✂️  Split into {} chunks", chunks.len());
-
-    // C. Embed (Rig Magic)
+    // B. Embed (1-to-1 mapping)
     // Select the model requested by the user schema
     let model = openai.embedding_model(&job.model);
 
-    // Batch API call
+    // Generate embedding for the full content
     let embeddings = EmbeddingsBuilder::new(model.clone())
-        .documents(chunks.clone())?
+        .documents(vec![job.content.clone()])?
         .build()
         .await?;
 
-    // D. Transactional Write
-    let mut tx = pool.begin().await?;
-
-    // 1. Clean up existing vectors for this doc (Idempotency)
-    sqlx::query!(
-        "DELETE FROM search_index WHERE document_id = $1",
-        job.document_id
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    // 2. Insert new vectors
-    for (i, embedding) in embeddings.into_iter().enumerate() {
-        let chunk_text = chunks[i];
-        // Convert rig's Vec<f64> or Vec<f32> to pgvector's Vector type
+    if let Some(embedding) = embeddings.first() {
+        // C. Update Postgres
         // Rig returns f64 usually, pgvector expects f32 mostly, let's cast
         let vec_f32: Vec<f32> = embedding.vec.iter().map(|&x| x as f32).collect();
         let vector = Vector::from(vec_f32);
 
-        sqlx::query!(
-            "INSERT INTO search_index (document_id, chunk_index, chunk_text, embedding) 
-             VALUES ($1, $2, $3, $4)",
-            job.document_id,
-            i as i32,
-            chunk_text,
-            vector as Vector // Explicit cast for SQLx
-        )
-        .execute(&mut *tx)
-        .await?;
-    }
+        // Dynamic SQL update since we don't know the table name at compile time
+        // Note: tableName and vectorField come from our internal schema so are trusted-ish
+        let sql = format!(
+            "UPDATE \"{}\" SET \"{}\" = $1 WHERE \"_id\" = $2",
+            job.tableName, job.vectorField
+        );
 
-    tx.commit().await?;
-    println!("✅ Finished Doc ID: {}\n", job.document_id);
+        sqlx::query(&sql)
+            .bind(vector)
+            .bind(job.document_id)
+            .execute(pool) // We can execute directly on pool, no tx needed for single update
+            .await?;
+
+        println!("✅ Updated embedding for Doc ID: {}\n", job.document_id);
+    }
 
     Ok(())
 }

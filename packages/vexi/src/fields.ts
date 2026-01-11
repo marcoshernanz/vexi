@@ -3,11 +3,13 @@
 export interface EmbedConfig {
   model?: string;
   strategy?: string;
+  dimensions?: number;
 }
 
 const DEFAULT_EMBED_CONFIG: EmbedConfig = {
   model: "openai/text-embedding-3-small",
   strategy: "recursive-markdown",
+  dimensions: 1536,
 };
 
 // Internal symbol for storing config hidden from public API
