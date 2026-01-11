@@ -1,8 +1,7 @@
-import type { InferOutput, VOptional, VType } from "./fields";
+import { VType } from "./fields";
 
-export type TableShape = Record<string, VType<unknown>>;
+export type TableShape = Record<string, VType<any>>;
 
-// We capture the "Shape" generics so we don't lose the specific keys
 export class VTable<Shape extends TableShape> {
   constructor(public readonly shape: Shape) {}
 }
@@ -10,8 +9,6 @@ export class VTable<Shape extends TableShape> {
 export class VSchema<Tables extends Record<string, VTable<any>>> {
   constructor(public readonly tables: Tables) {}
 }
-
-// --- Definition Functions ---
 
 export function defineTable<const Shape extends TableShape>(
   shape: Shape
@@ -25,51 +22,22 @@ export function defineSchema<const Tables extends Record<string, VTable<any>>>(
   return new VSchema(tables);
 }
 
-// --- Inference Helpers ---
+// Inference Types
 
-type ShapeOf<T extends VTable<any>> = T extends VTable<infer Shape>
-  ? Shape
-  : never;
+type ExtractOutput<T> = T extends VType<infer O> ? O : never;
 
-type TablesOf<S extends VSchema<any>> = S extends VSchema<infer Tables>
-  ? Tables
-  : never;
+export type InferDoc<T extends VTable<any>> = {
+  // Required keys: Output type does NOT include undefined
+  [K in keyof T["shape"] as undefined extends ExtractOutput<T["shape"][K]>
+    ? never
+    : K]: ExtractOutput<T["shape"][K]>;
+} & {
+  // Optional keys: Output type DOES include undefined
+  [K in keyof T["shape"] as undefined extends ExtractOutput<T["shape"][K]>
+    ? K
+    : never]?: Exclude<ExtractOutput<T["shape"][K]>, undefined>;
+};
 
-type Prettify<T> = { [K in keyof T]: T[K] };
-
-type IsOptionalField<T extends VType<any>> = T extends VOptional<any>
-  ? true
-  : false;
-
-type OptionalKeys<Shape extends TableShape> = {
-  [K in keyof Shape]-?: IsOptionalField<Shape[K]> extends true ? K : never;
-}[keyof Shape];
-
-type RequiredKeys<Shape extends TableShape> = Exclude<
-  keyof Shape,
-  OptionalKeys<Shape>
->;
-
-/**
- * Takes a Table Definition and returns the TypeScript Interface for a document.
- * Example: InferDoc<typeof posts> -> { title: string; isPublished: boolean }
- */
-export type InferDoc<T extends VTable<any>> = Prettify<
-  // Required properties
-  {
-    [K in RequiredKeys<ShapeOf<T>>]: InferOutput<ShapeOf<T>[K]>;
-  } & {
-    // Optional properties
-    [K in OptionalKeys<ShapeOf<T>>]?: Exclude<
-      InferOutput<ShapeOf<T>[K]>,
-      undefined
-    >;
-  }
->;
-
-/**
- * Takes a Schema Definition and returns the full database shape.
- */
 export type InferSchema<S extends VSchema<any>> = {
-  [K in keyof TablesOf<S>]: InferDoc<TablesOf<S>[K]>;
+  [K in keyof S["tables"]]: InferDoc<S["tables"][K]>;
 };

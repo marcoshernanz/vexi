@@ -6,31 +6,41 @@ import {
   InferDoc,
 } from "./src/index";
 
-const posts = defineTable({
-  title: v.string(),
-  isPublished: v.boolean(),
-  content: v.text().embed({
-    model: "openai/text-embedding-3-small",
-    strategy: "recursive-markdown",
-  }),
+const table = defineTable({
+  stringField: v.string(),
+  optionalField: v.string().optional(),
+  textField: v.text().embed(),
+  optionalTextField: v.text().optional().embed(),
+  numberField: v.number(),
+  booleanField: v.boolean(),
 });
 
 const schema = defineSchema({
-  posts,
+  table,
 });
 
 const db = createClient({ schema });
 
-type Post = InferDoc<typeof posts>;
+type Table = InferDoc<typeof table>;
 
 async function main() {
-  await db.posts.insert({
-    title: "Rust Guide",
-    isPublished: true,
-    content: "Rust is fast.",
+  await db.table.insert({
+    stringField: "Rust Guide",
+    optionalField: "Optional value",
+    textField: "Rust is fast.",
+    optionalTextField: "Optional text",
+    numberField: 42,
+    booleanField: true,
   });
 
-  const results = await db.posts.search("Is Rust fast?", { limit: 5 });
+  const results = await db.table.search("Is Rust fast?", { limit: 5 });
+
+  /*
+
+  results should be of type Table[]
+  Without any _id, _score, _match_text fields
+
+  */
 }
 
 main();

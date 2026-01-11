@@ -1,0 +1,1 @@
+- [ ] .optional() before or after .text()?
