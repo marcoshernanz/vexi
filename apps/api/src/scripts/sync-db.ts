@@ -24,6 +24,9 @@ async function main() {
   try {
     await client.query("BEGIN");
 
+    // Clean up previous run
+    await client.query('DROP TABLE IF EXISTS "table" CASCADE');
+
     for (const sql of statements) {
       console.log(`Executing: ${sql.substring(0, 50).replace(/\n/g, " ")}...`);
       await client.query(sql);

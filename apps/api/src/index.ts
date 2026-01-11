@@ -3,10 +3,12 @@ import { Pool } from "pg";
 import Redis from "ioredis";
 import { randomUUID } from "crypto";
 import dotenv from "dotenv";
+import OpenAI from "openai";
 
 dotenv.config(); // Load .env variables
 
 const app = Fastify({ logger: true });
+const openai = new OpenAI();
 
 // 1. Database Connection (Source of Truth)
 const db = new Pool({
@@ -47,7 +49,6 @@ app.post("/insert", async (req, reply) => {
     const jobPayload = JSON.stringify({
       document_id: id,
       tableName,
-      vectorField: `${embedConfig.field}_embedding`,
       content: data[embedConfig.field], // Extract the text to embed
       model: embedConfig.model,
       chunk_strategy: embedConfig.strategy,
@@ -64,14 +65,50 @@ app.post("/insert", async (req, reply) => {
 app.post("/search", async (req, reply) => {
   const { tableName, query, limit } = req.body as any;
 
-  // TODO: Phase 5 - Add vector search using:
-  // ORDER BY embedding <=> $1 LIMIT $2
+  // 1. Generate Query Embedding
+  const embeddingResponse = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: query,
+  });
+  const vector = JSON.stringify(embeddingResponse.data[0].embedding);
+  const k = limit || 10;
 
-  const result = await db.query(`SELECT * FROM "${tableName}" LIMIT $1`, [
-    limit || 10,
-  ]);
+  // 2. Perform Hybrid Search
+  // Algorithm: Linear Combination (0.8 * Vector + 0.2 * Keyword)
+  // We search chunks, score them, and aggregate by document.
 
-  return result.rows;
+  const sql = `
+    WITH matches AS (
+      SELECT 
+        parent_id,
+        chunk_text,
+        (1 - (embedding <=> $1)) as semantic_score,
+        ts_rank_cd(to_tsvector('english', chunk_text), websearch_to_tsquery('english', $3)) as keyword_score
+      FROM "${tableName}_embeddings"
+    )
+    SELECT 
+      doc.*,
+      MAX(
+        COALESCE(matches.semantic_score, 0) * 0.8 + 
+        COALESCE(matches.keyword_score, 0) * 0.2
+      ) as _score,
+      -- Return the best matching chunk text for specific context
+      (ARRAY_AGG(matches.chunk_text ORDER BY matches.semantic_score DESC))[1] as _match_text
+    FROM matches
+    JOIN "${tableName}" doc ON matches.parent_id = doc._id
+    GROUP BY doc._id
+    ORDER BY _score DESC
+    LIMIT $2;
+  `;
+
+  try {
+    const result = await db.query(sql, [vector, k, query]);
+    return result.rows;
+  } catch (e) {
+    req.log.error(e);
+    // Fallback or rethrow
+    throw e;
+  }
 });
 
 // --- STARTUP ---

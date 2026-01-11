@@ -28,7 +28,7 @@ export class SchemaConverter {
 
     // 1. Ensure extensions exist
     statements.push(`CREATE EXTENSION IF NOT EXISTS vector;`);
-    statements.push(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`); // For gen_random_uuid() if pg < 13
+    statements.push(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`);
 
     // 2. Process each table
     for (const [tableName, table] of Object.entries(schema.tables)) {
@@ -38,7 +38,7 @@ export class SchemaConverter {
         `"_created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()`,
       ];
 
-      const vectorIndexes: string[] = [];
+      const extraTables: string[] = [];
 
       for (const [fieldName, field] of Object.entries(vTable.shape)) {
         try {
@@ -47,15 +47,38 @@ export class SchemaConverter {
           // Add main column (data)
           columns.push(`"${fieldName}" ${def.type}`);
 
-          // Add sidecar vector column if it's an embedding
+          // Create separate embedding table if it's an embedding field
           if (def.isVector) {
-            const vectorColName = `${fieldName}_embedding`;
-            columns.push(`"${vectorColName}" vector(${def.vectorDim})`);
+            const embedTableName = `${tableName}_embeddings`;
 
-            // Add HNSW index for fast similarity search
-            // using cosine distance (vector_cosine_ops)
-            vectorIndexes.push(
-              `CREATE INDEX IF NOT EXISTS "idx_${tableName}_${fieldName}_vec" ON "${tableName}" USING hnsw ("${vectorColName}" vector_cosine_ops);`
+            // Embeddings Table:
+            // - id: PK
+            // - parent_id: FK to main table
+            // - chunk_index: Order of chunk
+            // - chunk_text: Content of chunk (for FTS)
+            // - embedding: Vector
+
+            const createEmbedTable = `
+              CREATE TABLE IF NOT EXISTS "${embedTableName}" (
+                "id" BIGSERIAL PRIMARY KEY,
+                "parent_id" UUID NOT NULL REFERENCES "${tableName}"("_id") ON DELETE CASCADE,
+                "chunk_index" INTEGER NOT NULL,
+                "chunk_text" TEXT NOT NULL,
+                "embedding" vector(${def.vectorDim})
+              );
+            `;
+
+            extraTables.push(createEmbedTable);
+
+            // Vector Index
+            extraTables.push(
+              `CREATE INDEX IF NOT EXISTS "idx_${embedTableName}_vec" ON "${embedTableName}" USING hnsw ("embedding" vector_cosine_ops);`
+            );
+
+            // Full Text Search Index
+            // We index the chunk_text using GIN for fast keyword search
+            extraTables.push(
+              `CREATE INDEX IF NOT EXISTS "idx_${embedTableName}_fts" ON "${embedTableName}" USING GIN (to_tsvector('english', "chunk_text"));`
             );
           }
         } catch (e) {
@@ -65,6 +88,7 @@ export class SchemaConverter {
         }
       }
 
+      // Create Main Table
       const createTableSql = `
         CREATE TABLE IF NOT EXISTS "${tableName}" (
           ${columns.join(",\n          ")}
@@ -72,7 +96,9 @@ export class SchemaConverter {
       `;
 
       statements.push(createTableSql);
-      statements.push(...vectorIndexes);
+
+      // Create Embeddings Tables (must come after main table creation)
+      statements.push(...extraTables);
     }
 
     return statements;

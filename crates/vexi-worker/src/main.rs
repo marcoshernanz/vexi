@@ -1,11 +1,15 @@
 use anyhow::Result;
 use dotenv::dotenv;
 use pgvector::Vector;
-use redis::AsyncCommands; // Use async redis
-use rig::{embeddings::EmbeddingsBuilder, providers::openai};
+use redis::AsyncCommands;
+use rig::client::EmbeddingsClient;
+use rig::client::ProviderClient; // Required for from_env
+use rig::embeddings::EmbeddingsBuilder;
+use rig::providers::openai;
 use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use std::env;
+use text_splitter::TextSplitter;
 use uuid::Uuid;
 
 // The Job Payload matching what Node.js sends
@@ -13,7 +17,6 @@ use uuid::Uuid;
 struct JobPayload {
     document_id: Uuid,
     tableName: String,
-    vectorField: String,
     content: String,
     model: String,
 }
@@ -33,7 +36,7 @@ async fn main() -> Result<()> {
     // 2. Redis Connection
     let redis_url = env::var("REDIS_URL").expect("REDIS_URL must be set");
     let client = redis::Client::open(redis_url)?;
-    let mut con = client.get_async_connection().await?;
+    let mut con = client.get_multiplexed_async_connection().await?;
 
     // 3. AI Provider (Rig)
     let openai_client = openai::Client::from_env();
@@ -65,37 +68,58 @@ async fn process_job(json_str: &str, pool: &sqlx::PgPool, openai: &openai::Clien
         job.document_id, job.tableName
     );
 
-    // B. Embed (1-to-1 mapping)
-    // Select the model requested by the user schema
+    // B. Chunk
+    // We trim chunks to fit context windows efficiently
+    // 500 characters roughly
+    let splitter = TextSplitter::new(500);
+    let chunks: Vec<&str> = splitter.chunks(&job.content).collect();
+    println!("✂️  Split into {} chunks", chunks.len());
+
+    // C. Embed matches chunks
     let model = openai.embedding_model(&job.model);
 
-    // Generate embedding for the full content
-    let embeddings = EmbeddingsBuilder::new(model.clone())
-        .documents(vec![job.content.clone()])?
+    // Batch API call
+    let results = EmbeddingsBuilder::new(model.clone())
+        .documents(chunks.clone())?
         .build()
         .await?;
 
-    if let Some(embedding) = embeddings.first() {
-        // C. Update Postgres
-        // Rig returns f64 usually, pgvector expects f32 mostly, let's cast
+    // D. Transactional Write to Embeddings Table
+    // The table name is derived: {tableName}_embeddings
+    let embed_table_name = format!("{}_embeddings", job.tableName);
+    let mut tx = pool.begin().await?;
+
+    // 1. Clean up existing vectors for this doc (Idempotency)
+    // Dynamic SQL required
+    let delete_sql = format!("DELETE FROM \"{}\" WHERE parent_id = $1", embed_table_name);
+    sqlx::query(&delete_sql)
+        .bind(job.document_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 2. Insert new vectors
+    for (i, (_, embeddings_wrapper)) in results.into_iter().enumerate() {
+        let chunk_text = chunks[i];
+        let embedding = embeddings_wrapper.first();
         let vec_f32: Vec<f32> = embedding.vec.iter().map(|&x| x as f32).collect();
         let vector = Vector::from(vec_f32);
 
-        // Dynamic SQL update since we don't know the table name at compile time
-        // Note: tableName and vectorField come from our internal schema so are trusted-ish
-        let sql = format!(
-            "UPDATE \"{}\" SET \"{}\" = $1 WHERE \"_id\" = $2",
-            job.tableName, job.vectorField
+        let insert_sql = format!(
+            "INSERT INTO \"{}\" (parent_id, chunk_index, chunk_text, embedding) VALUES ($1, $2, $3, $4)",
+            embed_table_name
         );
 
-        sqlx::query(&sql)
-            .bind(vector)
+        sqlx::query(&insert_sql)
             .bind(job.document_id)
-            .execute(pool) // We can execute directly on pool, no tx needed for single update
+            .bind(i as i32)
+            .bind(chunk_text)
+            .bind(vector)
+            .execute(&mut *tx)
             .await?;
-
-        println!("✅ Updated embedding for Doc ID: {}\n", job.document_id);
     }
+
+    tx.commit().await?;
+    println!("✅ Indexed Doc ID: {}\n", job.document_id);
 
     Ok(())
 }
