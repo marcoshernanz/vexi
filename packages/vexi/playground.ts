@@ -1,4 +1,10 @@
-import { v, defineTable, defineSchema, createClient } from "./src/index";
+import {
+  v,
+  defineTable,
+  defineSchema,
+  createClient,
+  InferDoc,
+} from "./src/index";
 
 const posts = defineTable({
   title: v.string(),
@@ -10,10 +16,12 @@ const posts = defineTable({
 });
 
 const schema = defineSchema({
-  posts: posts,
+  posts,
 });
 
 const db = createClient({ schema });
+
+type Post = InferDoc<typeof posts>;
 
 async function main() {
   await db.posts.insert({

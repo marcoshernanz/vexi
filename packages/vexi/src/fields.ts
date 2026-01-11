@@ -1,86 +1,95 @@
 import type { EmbedConfig } from "./config";
 
-export type InferOutput<T extends VType<any>> = T["_output"];
+export type InferOutput<T extends VType<any>> = T extends VType<infer Output>
+  ? Output
+  : never;
+
+const EMBED_CONFIG = new WeakMap<object, EmbedConfig>();
+const OPTIONAL_INNER = new WeakMap<object, VType<any>>();
+
+const DEFAULT_EMBED_CONFIG: EmbedConfig = {
+  model: "openai/text-embedding-3-small",
+  strategy: "recursive-markdown",
+};
 
 // Generic <Output> tells TypeScript what this field resolves to (e.g., string)
 export abstract class VType<Output = unknown> {
-  abstract readonly _type: string;
+  // Hidden phantom field to anchor Output for type inference (not accessible to consumers).
+  protected declare readonly __vexiOutputBrand: Output;
+}
 
-  // "Phantom" property. It doesn't exist at runtime,
-  // but TS uses it to store the inferred type.
-  declare readonly _output: Output;
-
+abstract class VOptionalableType<Output> extends VType<Output> {
   optional(): VOptional<this> {
     return new VOptional(this);
-  }
-
-  nullable(): VNullable<this> {
-    return new VNullable(this);
-  }
-
-  /** @internal */
-  _getEmbedConfig(): EmbedConfig | undefined {
-    return undefined;
   }
 }
 
 export class VOptional<Inner extends VType<any>> extends VType<
   InferOutput<Inner> | undefined
 > {
-  readonly _type = "optional" as const;
+  // Hidden brand so non-optional fields don't structurally match VOptional.
+  private declare readonly __vexiOptionalBrand: true;
 
-  constructor(public readonly inner: Inner) {
+  constructor(inner: Inner) {
     super();
-  }
-
-  override _getEmbedConfig(): EmbedConfig | undefined {
-    return this.inner._getEmbedConfig();
+    OPTIONAL_INNER.set(this, inner);
   }
 }
 
-export class VNullable<
-  Inner extends VType<any>
-> extends VType<InferOutput<Inner> | null> {
-  readonly _type = "nullable" as const;
+export class VString extends VOptionalableType<string> {}
 
-  constructor(public readonly inner: Inner) {
-    super();
+export class VBoolean extends VOptionalableType<boolean> {}
+
+export class VNumber extends VOptionalableType<number> {}
+
+// --- VText and variants for chaining ---
+
+export class VEmbeddedText extends VType<string> {}
+
+export class VOptionalEmbeddedText extends VOptional<VText> {}
+
+export class VOptionalText extends VOptional<VText> {
+  embed(config: EmbedConfig = DEFAULT_EMBED_CONFIG): VOptionalEmbeddedText {
+    const inner = OPTIONAL_INNER.get(this) as VText;
+    const embedded = new VOptionalEmbeddedText(inner);
+    EMBED_CONFIG.set(embedded, config);
+    return embedded;
   }
-
-  override _getEmbedConfig(): EmbedConfig | undefined {
-    return this.inner._getEmbedConfig();
-  }
-}
-
-export class VString extends VType<string> {
-  readonly _type = "string" as const;
-}
-
-export class VBoolean extends VType<boolean> {
-  readonly _type = "boolean" as const;
-}
-
-export class VNumber extends VType<number> {
-  readonly _type = "number" as const;
 }
 
 export class VText extends VType<string> {
-  readonly _type = "text" as const;
-
-  // Internal metadata storage
-  private _embedConfig?: EmbedConfig;
-
   /**
    * Marks this field to be automatically embedded by the vector database.
    */
-  embed(config: EmbedConfig): this {
-    this._embedConfig = config;
-    return this; // Return 'this' to allow chaining
+  embed(config: EmbedConfig = DEFAULT_EMBED_CONFIG): VEmbeddedText {
+    const embedded = new VEmbeddedText();
+    EMBED_CONFIG.set(embedded, config);
+    return embedded;
   }
 
-  override _getEmbedConfig(): EmbedConfig | undefined {
-    return this._embedConfig;
+  optional(): VOptionalText {
+    return new VOptionalText(this);
   }
+}
+
+/** @internal */
+export function getEmbedConfig(type: VType<any>): EmbedConfig | undefined {
+  let current: VType<any> = type;
+
+  // Check eagerly at top level
+  let config = EMBED_CONFIG.get(current as unknown as object);
+  if (config) return config;
+
+  while (current instanceof VOptional) {
+    const inner = OPTIONAL_INNER.get(current as unknown as object);
+    if (!inner) break;
+    current = inner;
+
+    config = EMBED_CONFIG.get(current as unknown as object);
+    if (config) return config;
+  }
+
+  return undefined;
 }
 
 export const v = {

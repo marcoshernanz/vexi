@@ -1,27 +1,25 @@
-import type { InferOutput, VNullable, VOptional, VType } from "./fields";
+import type { InferOutput, VOptional, VType } from "./fields";
 
-export type TableShape = Record<string, VType<any>>;
+export type TableShape = Record<string, VType<unknown>>;
 
 // We capture the "Shape" generics so we don't lose the specific keys
 export class VTable<Shape extends TableShape> {
-  readonly _type = "table" as const;
   constructor(public readonly shape: Shape) {}
 }
 
 export class VSchema<Tables extends Record<string, VTable<any>>> {
-  readonly _type = "schema" as const;
   constructor(public readonly tables: Tables) {}
 }
 
 // --- Definition Functions ---
 
-export function defineTable<Shape extends TableShape>(
+export function defineTable<const Shape extends TableShape>(
   shape: Shape
 ): VTable<Shape> {
   return new VTable(shape);
 }
 
-export function defineSchema<Tables extends Record<string, VTable<any>>>(
+export function defineSchema<const Tables extends Record<string, VTable<any>>>(
   tables: Tables
 ): VSchema<Tables> {
   return new VSchema(tables);
@@ -39,9 +37,9 @@ type TablesOf<S extends VSchema<any>> = S extends VSchema<infer Tables>
 
 type Prettify<T> = { [K in keyof T]: T[K] };
 
-type IsOptionalField<T extends VType<any>> =
-  | (T extends VOptional<any> ? true : false)
-  | (T extends VNullable<infer Inner> ? IsOptionalField<Inner> : false);
+type IsOptionalField<T extends VType<any>> = T extends VOptional<any>
+  ? true
+  : false;
 
 type OptionalKeys<Shape extends TableShape> = {
   [K in keyof Shape]-?: IsOptionalField<Shape[K]> extends true ? K : never;
@@ -60,8 +58,8 @@ export type InferDoc<T extends VTable<any>> = Prettify<
   // Required properties
   {
     [K in RequiredKeys<ShapeOf<T>>]: InferOutput<ShapeOf<T>[K]>;
-  } & // Optional properties
-  {
+  } & {
+    // Optional properties
     [K in OptionalKeys<ShapeOf<T>>]?: Exclude<
       InferOutput<ShapeOf<T>[K]>,
       undefined

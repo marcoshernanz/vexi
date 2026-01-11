@@ -3,7 +3,6 @@ export type { EmbeddingModel, ChunkingStrategy, EmbedConfig } from "./config";
 export {
   VType,
   VOptional,
-  VNullable,
   VString,
   VBoolean,
   VNumber,

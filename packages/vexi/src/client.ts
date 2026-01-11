@@ -1,5 +1,5 @@
 import type { WireEmbedConfig } from "./config";
-import type { VType } from "./fields";
+import { getEmbedConfig, type VType } from "./fields";
 import type { InferDoc, VSchema, VTable } from "./schema";
 import { VexiConfigError, VexiUnknownTableError } from "./errors";
 import { joinUrl, postJson, type FetchLike } from "./internal/http";
@@ -81,7 +81,7 @@ function extractEmbedConfig(tableDef: VTable<any>): WireEmbedConfig | null {
   for (const [field, fieldType] of Object.entries(tableDef.shape) as Array<
     [string, VType<any>]
   >) {
-    const embed = fieldType._getEmbedConfig();
+    const embed = getEmbedConfig(fieldType);
     if (!embed) continue;
 
     if (found) {
