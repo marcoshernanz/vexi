@@ -31,6 +31,8 @@ export class VOptional<T extends Validator<any>> extends Validator<
   }
 }
 
+export type InferType<T extends Validator<any>> = T["type"];
+
 export const v = {
   boolean: () => new VBoolean(),
   number: () => new VNumber(),
