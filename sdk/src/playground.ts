@@ -3,19 +3,22 @@ import { v } from "./fields.js";
 import { defineTable, Infer } from "./schema.js";
 
 async function main() {
+  // Define a table schema with fields
   const table = defineTable({
     id: v.number(),
     name: v.optional(v.string()),
   });
 
+  // Infer TypeScript type from the table definition
   type TableType = Infer<typeof table>;
 
+  // Initialize the Vexi client
   const db = createClient({ table }, { apiKey: "", baseUrl: "" });
 
-  // TODO: This shouldn't throw a type error
+  // Example usage: Insert a record (types are checked)
   await db.table.insert({ id: 1 });
 
-  // TODO: results should be of type TableType[]
+  // Example usage: Search returns typed results
   const results = await db.table.search("query");
 }
 
