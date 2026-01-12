@@ -1,0 +1,3 @@
+- [ ] Hide properties in v.string().
+- [ ] Now allow v.optional(v.optional())
+- [ ] InferType or v.infer?
