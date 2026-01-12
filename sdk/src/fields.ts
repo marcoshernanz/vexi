@@ -36,11 +36,8 @@ export const v = {
   number: () => new VNumber(),
   string: () => new VString(),
   optional: <T extends Validator<any>>(
-    value: T,
-  ): T extends VOptional<any> ? T : VOptional<T> => {
-    if (value instanceof VOptional) {
-      return value as any;
-    }
+    value: T extends VOptional<any> ? never : T,
+  ): VOptional<T> => {
     return new VOptional(value) as any;
   },
 };
