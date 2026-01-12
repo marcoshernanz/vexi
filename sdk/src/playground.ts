@@ -1,11 +1,16 @@
-import { InferType, v } from "./fields.js";
+import { createClient } from "./client.js";
+import { v } from "./fields.js";
+import { defineTable, InferType } from "./schema.js";
 
 function main() {
-  const a = v.boolean();
-  const b = v.optional(v.number());
+  const table = defineTable({
+    id: v.number(),
+    name: v.optional(v.string()),
+  });
 
-  type A = InferType<typeof a>;
-  type B = InferType<typeof b>;
+  type TableType = InferType<typeof table>;
+
+  const db = createClient({ table }, { apiKey: "", baseUrl: "" });
 }
 
 main();
