@@ -1,33 +1,43 @@
-import { InferType, Schema } from "./schema.js";
+import { Infer, TableDefinition } from "./schema.js";
 
 type ClientConfig = {
   apiKey: string;
   baseUrl: string;
 };
 
-export function createClient<S extends Record<string, Schema>>(
-  schema: S,
+// Interface for operations on a single table
+export interface TableClient<Def extends TableDefinition> {
+  insert: (data: Infer<Def>) => Promise<void>;
+  search: (query: string) => Promise<any[]>;
+}
+
+// Definition of the Database Schema
+export type DatabaseDefinition = Record<string, TableDefinition>;
+
+// The Client type, mapping table names to TableClients
+export type VexiClient<DB extends DatabaseDefinition> = {
+  [TableName in keyof DB]: TableClient<DB[TableName]>;
+};
+
+export function createClient<DB extends DatabaseDefinition>(
+  definition: DB,
   config: ClientConfig,
-) {
+): VexiClient<DB> {
   return new Proxy(
     {},
     {
       get: (_target, tableName: string) => {
         return {
-          insert: async (data: InferType<S[typeof tableName]>) => {
-            // TODO
+          insert: async (data: Infer<DB[keyof DB]>) => {
+            // TODO: Implement insert logic
           },
 
           search: async (query: string) => {
-            // TODO
+            // TODO: Implement search logic
+            return [];
           },
         };
       },
     },
-  ) as {
-    [K in keyof S]: {
-      insert: (data: InferType<S[K]>) => Promise<void>;
-      search: (query: string) => Promise<any[]>;
-    };
-  };
+  ) as VexiClient<DB>;
 }

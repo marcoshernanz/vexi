@@ -1,43 +1,43 @@
-export abstract class Validator<Type> {
-  readonly type!: Type;
-  readonly isVexiValidator = true;
+export abstract class Field<Result> {
+  readonly _result!: Result;
+  readonly isVexiField = true;
 
   constructor(readonly isOptional: boolean = false) {}
 }
 
-export class VBoolean<Type = boolean> extends Validator<Type> {
+export class BooleanField extends Field<boolean> {
   constructor() {
     super(false);
   }
 }
 
-export class VNumber<Type = number> extends Validator<Type> {
+export class NumberField extends Field<number> {
   constructor() {
     super(false);
   }
 }
 
-export class VString<Type = string> extends Validator<Type> {
+export class StringField extends Field<string> {
   constructor() {
     super(false);
   }
 }
 
-export class VOptional<T extends Validator<any>> extends Validator<
-  T["type"] | undefined
+export class OptionalField<T extends Field<any>> extends Field<
+  T["_result"] | undefined
 > {
-  constructor(readonly validator: T) {
+  constructor(readonly field: T) {
     super(true);
   }
 }
 
 export const v = {
-  boolean: () => new VBoolean(),
-  number: () => new VNumber(),
-  string: () => new VString(),
-  optional: <T extends Validator<any>>(
-    value: T extends VOptional<any> ? never : T,
-  ): VOptional<T> => {
-    return new VOptional(value) as any;
+  boolean: () => new BooleanField(),
+  number: () => new NumberField(),
+  string: () => new StringField(),
+  optional: <T extends Field<any>>(
+    field: T extends OptionalField<any> ? never : T,
+  ): OptionalField<T> => {
+    return new OptionalField(field) as any;
   },
 };
