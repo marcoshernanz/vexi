@@ -8,7 +8,7 @@ type ClientConfig = {
 // Interface for operations on a single table
 export interface TableClient<Def extends TableDefinition> {
   insert: (data: Infer<Def>) => Promise<void>;
-  search: (query: string) => Promise<any[]>;
+  search: (query: string) => Promise<Infer<Def>[]>;
 }
 
 // Definition of the Database Schema
