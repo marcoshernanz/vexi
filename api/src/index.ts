@@ -23,6 +23,7 @@ fastify.post<{ Body: { name: string; schema: any } }>(
   "/tables",
   async (request, reply) => {
     console.log(request.body);
+    return { success: true };
   },
 );
 
