@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { FastifyRequest, FastifyReply } from "fastify";
 import * as lancedb from "@lancedb/lancedb";
 import * as fs from "fs";
 import * as path from "path";
@@ -18,6 +18,13 @@ fastify.log.info(`Connected to LanceDB at ${dbDir}`);
 fastify.get("/", async (request, reply) => {
   return { hello: "world" };
 });
+
+fastify.post<{ Body: { name: string; schema: any } }>(
+  "/tables",
+  async (request, reply) => {
+    console.log(request.body);
+  },
+);
 
 try {
   await fastify.listen({ port: 3000 });
