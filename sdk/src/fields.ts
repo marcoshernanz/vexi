@@ -14,7 +14,17 @@ export abstract class Field<Result> {
    */
   readonly isVexiField = true;
 
-  constructor(readonly isOptional: boolean = false) {}
+  constructor(
+    readonly kind: string,
+    readonly isOptional: boolean = false,
+  ) {}
+
+  toJSON() {
+    return {
+      kind: this.kind,
+      isOptional: this.isOptional,
+    };
+  }
 }
 
 /**
@@ -22,7 +32,7 @@ export abstract class Field<Result> {
  */
 export class BooleanField extends Field<boolean> {
   constructor() {
-    super(false);
+    super("boolean", false);
   }
 }
 
@@ -31,7 +41,7 @@ export class BooleanField extends Field<boolean> {
  */
 export class NumberField extends Field<number> {
   constructor() {
-    super(false);
+    super("number", false);
   }
 }
 
@@ -40,7 +50,7 @@ export class NumberField extends Field<number> {
  */
 export class StringField extends Field<string> {
   constructor() {
-    super(false);
+    super("string", false);
   }
 }
 
@@ -51,7 +61,7 @@ export class OptionalField<T extends Field<any>> extends Field<
   T["_result"] | undefined
 > {
   constructor(readonly field: T) {
-    super(true);
+    super(field.kind, true);
   }
 }
 
