@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.build.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*", "eslint.config.mts", "prettier.config.mts"],
+  "exclude": ["node_modules", "dist"]
+}
