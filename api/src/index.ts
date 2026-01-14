@@ -5,10 +5,11 @@
  * SDK client and the underlying LanceDB storage engine. It handles schema synchronization,
  * table creation, and data operations.
  */
-import Fastify, { FastifyRequest, FastifyReply } from "fastify";
+import Fastify from "fastify";
 import * as lancedb from "@lancedb/lancedb";
 import * as fs from "fs";
 import * as path from "path";
+import { z } from "zod";
 import { CreateTableSchema, VexiSchema } from "./validator.js";
 import { toArrowSchema } from "./schema.js";
 
@@ -23,43 +24,6 @@ if (!fs.existsSync(dbDir)) {
 
 const db = await lancedb.connect(dbDir);
 fastify.log.info(`Connected to LanceDB at ${dbDir}`);
-
-/**
- * Health check endpoint.
- */
-fastify.get("/", async (request, reply) => {
-  return { hello: "world" };
-});
-
-/**
- * List all tables.
- * Returns an array of table names currently existing in the LanceDB database.
- */
-fastify.get("/tables", async (request, reply) => {
-  const tables = await db.tableNames();
-  return { tables };
-});
-
-/**
- * Get table details.
- * Retrieves the schema and metadata for a specific table by name.
- *
- * @param name - The name of the table to retrieve.
- * @returns The table schema if found, or a 404 error.
- */
-fastify.get<{ Params: { name: string } }>(
-  "/tables/:name",
-  async (request, reply) => {
-    const { name } = request.params;
-    try {
-      const table = await db.openTable(name);
-      const schema = await table.schema();
-      return { name, schema };
-    } catch (e) {
-      return reply.code(404).send({ error: "Table not found" });
-    }
-  },
-);
 
 /**
  * Create a new table.
@@ -79,7 +43,7 @@ fastify.post<{ Body: { name: string; schema: VexiSchema } }>(
     const result = CreateTableSchema.safeParse(request.body);
 
     if (!result.success) {
-      return reply.code(400).send({ error: result.error.format() });
+      return reply.code(400).send({ error: z.treeifyError(result.error) });
     }
 
     const { name, schema } = result.data;

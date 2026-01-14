@@ -27,10 +27,8 @@ export function toArrowSchema(schema: VexiSchema): arrow.Schema {
       type = new arrow.Utf8();
     } else if (field.kind === "number") {
       type = new arrow.Float64();
-    } else if (field.kind === "boolean") {
-      type = new arrow.Bool();
     } else {
-      throw new Error(`Unsupported field kind: ${field.kind}`);
+      type = new arrow.Bool();
     }
 
     fields.push(new arrow.Field(name, type, field.isOptional));
