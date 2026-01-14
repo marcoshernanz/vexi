@@ -12,7 +12,7 @@ type ClientConfig = {
  * Interface for database operations on a specific table.
  * @template Def The definition of the table structure.
  */
-export interface TableClient<Def extends TableDefinition> {
+export type TableClient<Def extends TableDefinition> = {
   /**
    * Insert a new record into the table.
    * @param data The record to insert, matching the table schema.
@@ -25,7 +25,7 @@ export interface TableClient<Def extends TableDefinition> {
    * @returns A promise resolving to an array of matching records.
    */
   search: (query: string) => Promise<Infer<Def>[]>;
-}
+};
 
 /**
  * Definition of the entire database schema, mapping table names to their definitions.
@@ -64,7 +64,6 @@ export function createClient<DB extends DatabaseDefinition>(
           search: async (query: string) => {
             // TODO: Implement search logic using config.baseUrl and config.apiKey
             // console.log(`Searching in ${tableName} for "${query}"`);
-            return [];
           },
         };
       },

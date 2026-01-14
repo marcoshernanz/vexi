@@ -16,7 +16,7 @@ export abstract class Field<Result> {
 
   constructor(
     readonly kind: string,
-    readonly isOptional: boolean = false,
+    readonly isOptional = false,
   ) {}
 
   toJSON() {
@@ -57,7 +57,7 @@ export class StringField extends Field<string> {
 /**
  * Wrapper for optional fields.
  */
-export class OptionalField<T extends Field<any>> extends Field<
+export class OptionalField<T extends Field<unknown>> extends Field<
   T["_result"] | undefined
 > {
   constructor(readonly field: T) {
@@ -76,9 +76,9 @@ export const v = {
    * Marks a field as optional.
    * @param field The field to make optional.
    */
-  optional: <T extends Field<any>>(
-    field: T extends OptionalField<any> ? never : T,
+  optional: <T extends Field<unknown>>(
+    field: T extends OptionalField<Field<unknown>> ? never : T,
   ): OptionalField<T> => {
-    return new OptionalField(field) as any;
+    return new OptionalField(field);
   },
 };

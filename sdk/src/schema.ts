@@ -3,7 +3,7 @@ import { Field, OptionalField } from "./fields.js";
 /**
  * Defines a table structure mapping column names to Fields.
  */
-export type TableDefinition = Record<string, Field<any>>;
+export type TableDefinition = Record<string, Field<unknown>>;
 
 /**
  * Helper function to define a table schema with strict typing.
@@ -37,12 +37,12 @@ export type Infer<T> =
     : Prettify<
         // Required keys
         {
-          [K in keyof T as T[K] extends OptionalField<any>
+          [K in keyof T as T[K] extends OptionalField<Field<unknown>>
             ? never
             : K]: T[K] extends Field<infer Result> ? Result : never;
         } & {
           // Optional keys
-          [K in keyof T as T[K] extends OptionalField<any>
+          [K in keyof T as T[K] extends OptionalField<Field<unknown>>
             ? K
             : never]?: T[K] extends Field<infer Result> ? Result : never;
         }
