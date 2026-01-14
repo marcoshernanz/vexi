@@ -1,3 +1,10 @@
 - [ ] Hide properties in v.string().
 - [ ] Now allow v.optional(v.optional())
 - [ ] InferType or v.infer?
+- [ ] tsx without npx (in server - npm run dev)
+- [ ] LanceDB stored in docker
+- [ ] createClient named arguments
+- [ ] Zod schema for api body?
+- [ ] Document
+- [ ] API with /tables to pass all tables directly?
+- [ ] Handle database migration
