@@ -1,4 +1,16 @@
 #!/usr/bin/env node
+
+/**
+ * Vexi CLI.
+ *
+ * This tool is responsible for synchronizing the local database schema definitions
+ * (written in TypeScript) with the Vexi API server.
+ *
+ * Capabilities:
+ * - Loads `schema.ts` dynamically using `jiti`.
+ * - Validates that exported objects are Vexi Field definitions.
+ * - Pushes valid table schemas to the API via HTTP POST.
+ */
 import { cac } from "cac";
 import { createJiti } from "jiti";
 import path from "path";
@@ -6,6 +18,13 @@ import fs from "fs";
 
 const cli = cac("vexi");
 
+/**
+ * Command: sync
+ * Usage: npx vexi sync
+ *
+ * Reads the 'schema.ts' file from the current working directory, extracts
+ * table definitions, and sends them to the Vexi server (default: localhost:3000).
+ */
 cli.command("sync", "Sync schema with the Vexi server").action(async () => {
   console.log("Syncing schema...");
 
@@ -16,6 +35,7 @@ cli.command("sync", "Sync schema with the Vexi server").action(async () => {
     process.exit(1);
   }
 
+  // Use jiti to load the TypeScript file without compiling it first.
   const jiti = createJiti(process.cwd());
   const mod = await jiti.import(schemaPath);
 
@@ -25,6 +45,7 @@ cli.command("sync", "Sync schema with the Vexi server").action(async () => {
   for (const [key, value] of Object.entries(mod as any)) {
     if (typeof value === "object" && value !== null) {
       // Check if values are Fields (simple heuristic: isVexiField property)
+      // We look for objects where every property value is a Vexi Field.
       const isTable = Object.values(value as any).every(
         (v: any) => v && v.isVexiField,
       );
@@ -39,6 +60,7 @@ cli.command("sync", "Sync schema with the Vexi server").action(async () => {
     return;
   }
 
+  // Iterate over found tables and push them to the API
   for (const [name, schema] of Object.entries(tables)) {
     console.log(`Pushing table: ${name}`);
     try {
