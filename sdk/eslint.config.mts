@@ -1,12 +1,12 @@
 // @ts-check
 
-import eslint from "@eslint/js";
 import { defineConfig } from "eslint/config";
+import eslint from "@eslint/js";
 import eslintConfigPrettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  eslint.configs.all,
+  eslint.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
   eslintConfigPrettier,
