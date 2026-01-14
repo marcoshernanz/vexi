@@ -3,6 +3,5 @@
 - [ ] InferType or v.infer?
 - [ ] tsx without npx (in server - npm run dev)
 - [ ] LanceDB stored in docker
-- [ ] createClient named arguments
 - [ ] API with /tables to pass all tables directly?
 - [ ] Handle database migration

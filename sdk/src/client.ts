@@ -3,7 +3,7 @@ import { Infer, TableDefinition } from "./schema.js";
 /**
  * Configuration options for the Vexi client.
  */
-type ClientConfig = {
+export type ClientConfig = {
   apiKey: string;
   baseUrl: string;
 };
@@ -41,27 +41,40 @@ export type VexiClient<DB extends DatabaseDefinition> = {
 };
 
 /**
+ * Options for creating a Vexi client.
+ */
+export type CreateClientOptions<DB extends DatabaseDefinition> = {
+  /**
+   * The database schema definition.
+   */
+  schema: DB;
+  /**
+   * Client configuration.
+   */
+  config: ClientConfig;
+};
+
+/**
  * Creates a strongly-typed Vexi client.
  *
- * @param definition The database definition object (map of table names to schemas).
- * @param config Client configuration (API key, base URL).
+ * @param options - Configuration options containing the schema and client config.
  * @returns A proxy object that handles database operations.
  */
 export function createClient<DB extends DatabaseDefinition>(
-  definition: DB,
-  config: ClientConfig,
+  options: CreateClientOptions<DB>,
 ): VexiClient<DB> {
+  const { schema: _schema, config: _config } = options;
   return new Proxy(
     {},
     {
-      get: (_target, tableName: string) => {
+      get: (_target, _tableName: string) => {
         return {
-          insert: async (data: Infer<DB[keyof DB]>) => {
+          insert: async (_data: Infer<DB[keyof DB]>) => {
             // TODO: Implement insert logic using config.baseUrl and config.apiKey
             // console.log(`Inserting into ${tableName}`, data);
           },
 
-          search: async (query: string) => {
+          search: async (_query: string) => {
             // TODO: Implement search logic using config.baseUrl and config.apiKey
             // console.log(`Searching in ${tableName} for "${query}"`);
           },
