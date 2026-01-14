@@ -63,15 +63,34 @@ export type CreateClientOptions<DB extends DatabaseDefinition> = {
 export function createClient<DB extends DatabaseDefinition>(
   options: CreateClientOptions<DB>,
 ): VexiClient<DB> {
-  const { schema: _schema, config: _config } = options;
+  const { schema: _schema, config } = options;
   return new Proxy(
     {},
     {
-      get: (_target, _tableName: string) => {
+      get: (_target, tableNameProp) => {
+        const tableName = String(tableNameProp);
         return {
-          insert: async (_data: Infer<DB[keyof DB]>) => {
-            // TODO: Implement insert logic using config.baseUrl and config.apiKey
-            // console.log(`Inserting into ${tableName}`, data);
+          insert: async (data: Infer<DB[keyof DB]>) => {
+            const response = await fetch(
+              `${config.baseUrl}/tables/${tableName}/insert`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${config.apiKey}`,
+                },
+                body: JSON.stringify([data]),
+              },
+            );
+
+            if (!response.ok) {
+              const errorBody = (await response.json().catch(() => ({}))) as {
+                error?: string;
+              };
+              throw new Error(
+                `Insert failed: ${errorBody.error ?? response.statusText}`,
+              );
+            }
           },
 
           search: async (_query: string) => {

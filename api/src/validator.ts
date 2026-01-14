@@ -31,6 +31,18 @@ export const CreateTableSchema = z.object({
 });
 
 /**
+ * Zod schema for the Insert Params.
+ */
+export const InsertParamsSchema = z.object({
+  name: z.string().min(1),
+});
+
+/**
+ * Zod schema for the Insert Body (Array of records).
+ */
+export const InsertBodySchema = z.array(z.record(z.string(), z.unknown()));
+
+/**
  * Inferred TypeScript type for a Vexi Field.
  * Represents the shape of a field object at runtime after validation.
  */

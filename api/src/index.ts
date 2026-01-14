@@ -10,7 +10,12 @@ import * as lancedb from "@lancedb/lancedb";
 import * as fs from "fs";
 import * as path from "path";
 import { z } from "zod";
-import { CreateTableSchema, VexiSchema } from "./validator.js";
+import {
+  CreateTableSchema,
+  InsertBodySchema,
+  InsertParamsSchema,
+  VexiSchema,
+} from "./validator.js";
 import { toArrowSchema } from "./schema.js";
 
 const fastify = Fastify({
@@ -66,6 +71,53 @@ fastify.post<{ Body: { name: string; schema: VexiSchema } }>(
     } catch (error) {
       fastify.log.error(error);
       return reply.code(500).send({ error: "Failed to create table" });
+    }
+  },
+);
+
+/**
+ * Insert data into a table.
+ *
+ * Accepts a table name and an array of records to insert.
+ *
+ * @param name - The name of the table.
+ * @body - The array of records to insert.
+ */
+fastify.post<{
+  Params: { name: string };
+  Body: Record<string, unknown>[];
+}>(
+  "/tables/:name/insert",
+  async (request, reply) => {
+    const paramsResult = InsertParamsSchema.safeParse(request.params);
+    const bodyResult = InsertBodySchema.safeParse(request.body);
+
+    if (!paramsResult.success) {
+      return reply.code(400).send({ error: z.treeifyError(paramsResult.error) });
+    }
+    if (!bodyResult.success) {
+      return reply.code(400).send({ error: z.treeifyError(bodyResult.error) });
+    }
+
+    const { name } = paramsResult.data;
+    const data = bodyResult.data;
+
+    try {
+      const existingTables = await db.tableNames();
+      if (!existingTables.includes(name)) {
+        return await reply
+          .code(404)
+          .send({ error: `Table '${name}' does not exist.` });
+      }
+
+      const table = await db.openTable(name);
+      await table.add(data);
+
+      fastify.log.info(`Inserted ${String(data.length)} records into '${name}'`);
+      return { success: true, count: data.length };
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.code(500).send({ error: "Failed to insert data" });
     }
   },
 );

@@ -2,13 +2,13 @@
 import { createClient } from "../sdk/src/index.js";
 import { users, products } from "./schema.js";
 
-const db = createClient(
-  { users, products },
-  {
+const db = createClient({
+  schema: { users, products },
+  config: {
     apiKey: "dev-key",
     baseUrl: "http://localhost:3000",
-  }
-);
+  },
+});
 
 async function main() {
   console.log("🚀 Vexi Client Initialized");
