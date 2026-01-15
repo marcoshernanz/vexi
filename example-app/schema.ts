@@ -1,5 +1,6 @@
 // In a real app, this would be: import { defineTable, v } from "vexi";
-import { defineTable, v } from "../sdk/src/index.js";
+// import { defineTable, v } from "../sdk/src/index.js";
+import { defineTable, v } from "../sdk/dist/index.js";
 
 export const users = defineTable({
   id: v.number(),

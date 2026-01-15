@@ -23,8 +23,7 @@
     "allowJs": true,
     "checkJs": true,
     "esModuleInterop": true,
-    "isolatedModules": true,
-    "stripInternal": true
+    "isolatedModules": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

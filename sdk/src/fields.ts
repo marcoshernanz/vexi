@@ -19,16 +19,22 @@ export abstract class Field<Result> {
    * Runtime flag to identify Vexi Field instances.
    * @internal
    */
-  readonly isVexiField = true;
+  protected readonly isVexiField = true;
 
   constructor(
-    /** @internal */
+    /**
+     * @internal
+     */
     readonly kind: string,
-    /** @internal */
+    /**
+     * @internal
+     */
     readonly isOptional = false,
   ) {}
 
-  /** @internal */
+  /**
+   * @internal
+   */
   toJSON(): Record<string, unknown> {
     return {
       kind: this.kind,
@@ -74,7 +80,9 @@ export class StringField extends Field<string> {
     return this;
   }
 
-  /** @internal */
+  /**
+   * @internal
+   */
   override toJSON() {
     return {
       ...super.toJSON(),
@@ -90,13 +98,17 @@ export class OptionalField<T extends Field<unknown>> extends Field<
   T extends Field<infer R> ? R | undefined : never
 > {
   constructor(
-    /** @internal */
+    /**
+     * @internal
+     */
     readonly field: T,
   ) {
     super(field.kind, true);
   }
 
-  /** @internal */
+  /**
+   * @internal
+   */
   override toJSON() {
     return {
       ...super.toJSON(),
