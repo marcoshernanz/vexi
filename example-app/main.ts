@@ -25,6 +25,14 @@ async function main() {
     isActive: true,
   });
 
+  // Batch insert products
+  await db.products.insert([
+    { sku: "P001", price: 100, tags: "electronics" },
+    { sku: "P002", price: 200 },
+    { sku: "P003", price: 50, tags: "sale" },
+  ]);
+  console.log("Inserted products batch");
+
   const results = await db.users.search("Alice");
   console.log("Search Results:", results);
 }

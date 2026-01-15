@@ -14,10 +14,10 @@ export type ClientConfig = {
  */
 export type TableClient<Def extends TableDefinition> = {
   /**
-   * Insert a new record into the table.
-   * @param data The record to insert, matching the table schema.
+   * Insert a new record or multiple records into the table.
+   * @param data The record(s) to insert, matching the table schema.
    */
-  insert: (data: Infer<Def>) => Promise<void>;
+  insert: (data: Infer<Def> | Infer<Def>[]) => Promise<void>;
 
   /**
    * Search for records in the table.
@@ -70,7 +70,8 @@ export function createClient<DB extends DatabaseDefinition>(
       get: (_target, tableNameProp) => {
         const tableName = String(tableNameProp);
         return {
-          insert: async (data: Infer<DB[keyof DB]>) => {
+          insert: async (data: Infer<DB[keyof DB]> | Infer<DB[keyof DB]>[]) => {
+            const records = Array.isArray(data) ? data : [data];
             const response = await fetch(
               `${config.baseUrl}/tables/${tableName}/insert`,
               {
@@ -79,7 +80,7 @@ export function createClient<DB extends DatabaseDefinition>(
                   "Content-Type": "application/json",
                   "Authorization": `Bearer ${config.apiKey}`,
                 },
-                body: JSON.stringify([data]),
+                body: JSON.stringify(records),
               },
             );
 
