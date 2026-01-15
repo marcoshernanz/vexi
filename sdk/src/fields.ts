@@ -11,19 +11,24 @@ export abstract class Field<Result> {
   /**
    * Phantom property used for TypeScript type inference.
    * This property does not exist at runtime.
+   * @internal
    */
-  readonly _result!: Result;
+  declare protected readonly _result: Result;
 
   /**
    * Runtime flag to identify Vexi Field instances.
+   * @internal
    */
   readonly isVexiField = true;
 
   constructor(
+    /** @internal */
     readonly kind: string,
+    /** @internal */
     readonly isOptional = false,
   ) {}
 
+  /** @internal */
   toJSON(): Record<string, unknown> {
     return {
       kind: this.kind,
@@ -69,6 +74,7 @@ export class StringField extends Field<string> {
     return this;
   }
 
+  /** @internal */
   override toJSON() {
     return {
       ...super.toJSON(),
@@ -81,19 +87,21 @@ export class StringField extends Field<string> {
  * Wrapper for optional fields.
  */
 export class OptionalField<T extends Field<unknown>> extends Field<
-  T["_result"] | undefined
+  T extends Field<infer R> ? R | undefined : never
 > {
-  constructor(readonly field: T) {
+  constructor(
+    /** @internal */
+    readonly field: T,
+  ) {
     super(field.kind, true);
   }
 
+  /** @internal */
   override toJSON() {
     return {
       ...super.toJSON(),
       // Forward the wrapped field's configuration
-      ...(this.field instanceof StringField
-        ? (this.field.toJSON())
-        : {}),
+      ...(this.field instanceof StringField ? this.field.toJSON() : {}),
       // Ensure correct kind and isOptional from this wrapper overwrite the child's
       kind: this.field.kind,
       isOptional: true,
