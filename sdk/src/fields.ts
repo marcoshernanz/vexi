@@ -1,3 +1,8 @@
+export type EmbeddingOptions = {
+  model?: string;
+  strategy?: "recursive-markdown" | (string & {});
+};
+
 /**
  * Base class for all Vexi fields.
  * @template Result The TypeScript type that this field represents.
@@ -19,7 +24,7 @@ export abstract class Field<Result> {
     readonly isOptional = false,
   ) {}
 
-  toJSON() {
+  toJSON(): Record<string, unknown> {
     return {
       kind: this.kind,
       isOptional: this.isOptional,
@@ -49,8 +54,26 @@ export class NumberField extends Field<number> {
  * Represents a string field.
  */
 export class StringField extends Field<string> {
+  private embeddingConfig?: EmbeddingOptions;
+
   constructor() {
     super("string", false);
+  }
+
+  /**
+   * Configures this field to be embedded.
+   * @param options Configuration for the embedding model and strategy.
+   */
+  embed(options?: EmbeddingOptions): this {
+    this.embeddingConfig = options ?? {};
+    return this;
+  }
+
+  override toJSON() {
+    return {
+      ...super.toJSON(),
+      ...(this.embeddingConfig ? { embedding: this.embeddingConfig } : {}),
+    };
   }
 }
 
@@ -62,6 +85,19 @@ export class OptionalField<T extends Field<unknown>> extends Field<
 > {
   constructor(readonly field: T) {
     super(field.kind, true);
+  }
+
+  override toJSON() {
+    return {
+      ...super.toJSON(),
+      // Forward the wrapped field's configuration
+      ...(this.field instanceof StringField
+        ? (this.field.toJSON())
+        : {}),
+      // Ensure correct kind and isOptional from this wrapper overwrite the child's
+      kind: this.field.kind,
+      isOptional: true,
+    };
   }
 }
 

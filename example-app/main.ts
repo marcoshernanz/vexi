@@ -27,9 +27,26 @@ async function main() {
 
   // Batch insert products
   await db.products.insert([
-    { sku: "P001", price: 100, tags: "electronics" },
-    { sku: "P002", price: 200 },
-    { sku: "P003", price: 50, tags: "sale" },
+    {
+      sku: "P001",
+      name: "Wireless Headphones",
+      description: "Noise cancelling headphones with 20h battery life.",
+      price: 100,
+      tags: "electronics",
+    },
+    {
+      sku: "P002",
+      name: "Smart Watch",
+      description: "Fitness tracker with heart rate monitor.",
+      price: 200,
+    },
+    {
+      sku: "P003",
+      name: "USB-C Cable",
+      description: "Fast charging cable, 2 meters.",
+      price: 50,
+      tags: "sale",
+    },
   ]);
   console.log("Inserted products batch");
 
