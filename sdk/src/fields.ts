@@ -25,17 +25,17 @@ export abstract class Field<Result> {
     /**
      * @internal
      */
-    readonly kind: string,
+    protected readonly kind: string,
     /**
      * @internal
      */
-    readonly isOptional = false,
+    protected readonly isOptional = false,
   ) {}
 
   /**
    * @internal
    */
-  toJSON(): Record<string, unknown> {
+  protected toJSON(): Record<string, unknown> {
     return {
       kind: this.kind,
       isOptional: this.isOptional,
@@ -83,7 +83,7 @@ export class StringField extends Field<string> {
   /**
    * @internal
    */
-  override toJSON() {
+  protected override toJSON() {
     return {
       ...super.toJSON(),
       ...(this.embeddingConfig ? { embedding: this.embeddingConfig } : {}),
@@ -103,19 +103,26 @@ export class OptionalField<T extends Field<unknown>> extends Field<
      */
     readonly field: T,
   ) {
-    super(field.kind, true);
+    // Cast to access protected members
+    const fieldInternal = field as unknown as { kind: string };
+    super(fieldInternal.kind, true);
   }
 
   /**
    * @internal
    */
-  override toJSON() {
+  protected override toJSON() {
+    // Cast to access protected members
+    const fieldInternal = this.field as unknown as {
+      kind: string;
+      toJSON(): Record<string, unknown>;
+    };
     return {
       ...super.toJSON(),
       // Forward the wrapped field's configuration
-      ...(this.field instanceof StringField ? this.field.toJSON() : {}),
+      ...(this.field instanceof StringField ? fieldInternal.toJSON() : {}),
       // Ensure correct kind and isOptional from this wrapper overwrite the child's
-      kind: this.field.kind,
+      kind: fieldInternal.kind,
       isOptional: true,
     };
   }
