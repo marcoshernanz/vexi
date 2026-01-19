@@ -1,5 +1,5 @@
 import * as arrow from "apache-arrow";
-import { VexiSchema } from "./validator.js";
+import { type VexiSchema } from "./validator.js";
 
 /**
  * Converts a validated Vexi Schema object into an Apache Arrow Schema.

@@ -1,6 +1,5 @@
 // In a real app, this would be: import { defineTable, v } from "vexi";
-// import { defineTable, v } from "../sdk/src/index.js";
-import { defineTable, v } from "../sdk/dist/index.js";
+import { defineTable, v } from "../sdk/src/index.js";
 
 export const users = defineTable({
   id: v.number(),
@@ -9,7 +8,7 @@ export const users = defineTable({
     v.string().embed({
       model: "openai/text-embedding-3-small",
       strategy: "recursive-markdown",
-    })
+    }),
   ),
   email: v.optional(v.string()),
   isActive: v.boolean(),

@@ -1,4 +1,4 @@
-import { Field, OptionalField } from "./fields.js";
+import { type Field, type OptionalField } from "./fields.js";
 
 /**
  * Defines a table structure mapping column names to Fields.

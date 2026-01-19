@@ -1,4 +1,4 @@
-import { Infer, TableDefinition } from "./schema.js";
+import { type Infer, type TableDefinition } from "./schema.js";
 
 /**
  * Configuration options for the Vexi client.
@@ -78,7 +78,7 @@ export function createClient<DB extends DatabaseDefinition>(
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
-                  "Authorization": `Bearer ${config.apiKey}`,
+                  Authorization: `Bearer ${config.apiKey}`,
                 },
                 body: JSON.stringify(records),
               },

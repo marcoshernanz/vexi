@@ -14,7 +14,7 @@ import {
   CreateTableSchema,
   InsertBodySchema,
   InsertParamsSchema,
-  VexiSchema,
+  type VexiSchema,
 } from "./validator.js";
 import { toArrowSchema } from "./schema.js";
 
@@ -86,41 +86,38 @@ fastify.post<{ Body: { name: string; schema: VexiSchema } }>(
 fastify.post<{
   Params: { name: string };
   Body: Record<string, unknown>[];
-}>(
-  "/tables/:name/insert",
-  async (request, reply) => {
-    const paramsResult = InsertParamsSchema.safeParse(request.params);
-    const bodyResult = InsertBodySchema.safeParse(request.body);
+}>("/tables/:name/insert", async (request, reply) => {
+  const paramsResult = InsertParamsSchema.safeParse(request.params);
+  const bodyResult = InsertBodySchema.safeParse(request.body);
 
-    if (!paramsResult.success) {
-      return reply.code(400).send({ error: z.treeifyError(paramsResult.error) });
+  if (!paramsResult.success) {
+    return reply.code(400).send({ error: z.treeifyError(paramsResult.error) });
+  }
+  if (!bodyResult.success) {
+    return reply.code(400).send({ error: z.treeifyError(bodyResult.error) });
+  }
+
+  const { name } = paramsResult.data;
+  const data = bodyResult.data;
+
+  try {
+    const existingTables = await db.tableNames();
+    if (!existingTables.includes(name)) {
+      return await reply
+        .code(404)
+        .send({ error: `Table '${name}' does not exist.` });
     }
-    if (!bodyResult.success) {
-      return reply.code(400).send({ error: z.treeifyError(bodyResult.error) });
-    }
 
-    const { name } = paramsResult.data;
-    const data = bodyResult.data;
+    const table = await db.openTable(name);
+    await table.add(data);
 
-    try {
-      const existingTables = await db.tableNames();
-      if (!existingTables.includes(name)) {
-        return await reply
-          .code(404)
-          .send({ error: `Table '${name}' does not exist.` });
-      }
-
-      const table = await db.openTable(name);
-      await table.add(data);
-
-      fastify.log.info(`Inserted ${String(data.length)} records into '${name}'`);
-      return { success: true, count: data.length };
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.code(500).send({ error: "Failed to insert data" });
-    }
-  },
-);
+    fastify.log.info(`Inserted ${String(data.length)} records into '${name}'`);
+    return { success: true, count: data.length };
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: "Failed to insert data" });
+  }
+});
 
 try {
   await fastify.listen({ port: 3000 });
