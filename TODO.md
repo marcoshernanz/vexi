@@ -5,3 +5,4 @@
 - [ ] LanceDB stored in docker
 - [ ] API with /tables to pass all tables directly?
 - [ ] Handle database migration
+- [ ] .env

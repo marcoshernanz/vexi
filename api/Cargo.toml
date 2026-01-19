@@ -1,0 +1,19 @@
+[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arrow = "56.2.0"
+arrow-array = "56.2.0"
+arrow-json = "56.2.0"
+arrow-schema = "56.2.0"
+axum = "0.8.8"
+dotenvy = "0.15.7"
+futures = "0.3.31"
+lancedb = "0.23.1"
+reqwest = { version = "0.13.1", features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["full"] }
+tower-http = { version = "0.6.8", features = ["cors"] }
