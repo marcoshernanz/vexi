@@ -1,1 +1,7 @@
-- [ ] .optional() before or after .text()?
+- [ ] Hide properties in v.string().
+- [ ] Now allow v.optional(v.optional())
+- [ ] InferType or v.infer?
+- [ ] tsx without npx (in server - npm run dev)
+- [ ] LanceDB stored in docker
+- [ ] API with /tables to pass all tables directly?
+- [ ] Handle database migration

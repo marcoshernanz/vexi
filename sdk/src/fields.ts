@@ -1,0 +1,147 @@
+export type EmbeddingOptions = {
+  model?: string;
+  strategy?: "recursive-markdown" | (string & {});
+};
+
+/**
+ * Base class for all Vexi fields.
+ * @template Result The TypeScript type that this field represents.
+ */
+export abstract class Field<Result> {
+  /**
+   * Phantom property used for TypeScript type inference.
+   * This property does not exist at runtime.
+   * @internal
+   */
+  declare protected readonly _result: Result;
+
+  /**
+   * Runtime flag to identify Vexi Field instances.
+   * @internal
+   */
+  protected readonly isVexiField = true;
+
+  constructor(
+    /**
+     * @internal
+     */
+    protected readonly kind: string,
+    /**
+     * @internal
+     */
+    protected readonly isOptional = false,
+  ) {}
+
+  /**
+   * @internal
+   */
+  protected toJSON(): Record<string, unknown> {
+    return {
+      kind: this.kind,
+      isOptional: this.isOptional,
+    };
+  }
+}
+
+/**
+ * Represents a boolean field.
+ */
+export class BooleanField extends Field<boolean> {
+  constructor() {
+    super("boolean", false);
+  }
+}
+
+/**
+ * Represents a numeric field.
+ */
+export class NumberField extends Field<number> {
+  constructor() {
+    super("number", false);
+  }
+}
+
+/**
+ * Represents a string field.
+ */
+export class StringField extends Field<string> {
+  private embeddingConfig?: EmbeddingOptions;
+
+  constructor() {
+    super("string", false);
+  }
+
+  /**
+   * Configures this field to be embedded.
+   * @param options Configuration for the embedding model and strategy.
+   */
+  embed(options?: EmbeddingOptions): this {
+    this.embeddingConfig = options ?? {};
+    return this;
+  }
+
+  /**
+   * @internal
+   */
+  protected override toJSON() {
+    return {
+      ...super.toJSON(),
+      ...(this.embeddingConfig ? { embedding: this.embeddingConfig } : {}),
+    };
+  }
+}
+
+/**
+ * Wrapper for optional fields.
+ */
+export class OptionalField<T extends Field<unknown>> extends Field<
+  T extends Field<infer R> ? R | undefined : never
+> {
+  constructor(
+    /**
+     * @internal
+     */
+    readonly field: T,
+  ) {
+    // Cast to access protected members
+    const fieldInternal = field as unknown as { kind: string };
+    super(fieldInternal.kind, true);
+  }
+
+  /**
+   * @internal
+   */
+  protected override toJSON() {
+    // Cast to access protected members
+    const fieldInternal = this.field as unknown as {
+      kind: string;
+      toJSON(): Record<string, unknown>;
+    };
+    return {
+      ...super.toJSON(),
+      // Forward the wrapped field's configuration
+      ...(this.field instanceof StringField ? fieldInternal.toJSON() : {}),
+      // Ensure correct kind and isOptional from this wrapper overwrite the child's
+      kind: fieldInternal.kind,
+      isOptional: true,
+    };
+  }
+}
+
+/**
+ * Builder object for defining schema fields.
+ */
+export const v = {
+  boolean: () => new BooleanField(),
+  number: () => new NumberField(),
+  string: () => new StringField(),
+  /**
+   * Marks a field as optional.
+   * @param field The field to make optional.
+   */
+  optional: <T extends Field<unknown>>(
+    field: T extends OptionalField<Field<unknown>> ? never : T,
+  ): OptionalField<T> => {
+    return new OptionalField(field);
+  },
+};
