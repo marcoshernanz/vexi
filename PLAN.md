@@ -216,6 +216,10 @@ Goal:
 - `npx vexi sync` reliably loads `schema.ts`, extracts only tables, and posts them in a single request.
 - CLI supports config flags so users do not have to edit code to change base URL.
 
+Milestone 2 note:
+
+- The CLI will prefer `POST /sync` (one-shot), but until Milestone 3 lands it should gracefully fall back to the current per-table `POST /tables` endpoint when the server returns 404.
+
 Work items:
 
 - Update `sdk/src/cli.ts`:
