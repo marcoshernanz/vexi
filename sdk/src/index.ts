@@ -5,4 +5,11 @@ export {
   type VexiClient,
 } from "./client.js";
 export { v } from "./fields.js";
-export { defineTable, type Infer } from "./schema.js";
+export {
+  createTable,
+  type Infer,
+  type InsertInput,
+  type Row,
+  type SearchResult,
+  type UpdatePatch,
+} from "./schema.js";

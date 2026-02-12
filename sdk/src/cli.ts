@@ -8,7 +8,7 @@
  *
  * Capabilities:
  * - Loads `schema.ts` dynamically using `jiti`.
- * - Validates that exported objects are Vexi Field definitions.
+ * - Validates that exported objects are Vexi Table definitions.
  * - Pushes valid table schemas to the API via HTTP POST.
  */
 import { cac } from "cac";
@@ -39,23 +39,20 @@ cli.command("sync", "Sync schema with the Vexi server").action(async () => {
   const jiti = createJiti(process.cwd());
   const mod = await jiti.import(schemaPath);
 
-  // Find all exported objects that look like tables (keys are fields)
+  // Find all exported values that are Vexi tables.
   const tables: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(mod as Record<string, unknown>)) {
-    if (typeof value === "object" && value !== null) {
-      // Check if values are Fields (simple heuristic: isVexiField property)
-      // We look for objects where every property value is a Vexi Field.
-      const isTable = Object.values(value as Record<string, unknown>).every(
-        (v) =>
-          typeof v === "object" &&
-          v !== null &&
-          "isVexiField" in v &&
-          (v as { isVexiField: unknown }).isVexiField === true,
-      );
-      if (isTable) {
-        tables[key] = value;
-      }
+    if (typeof value !== "object" || value === null) {
+      continue;
+    }
+
+    // A table is a `Table` instance (see `sdk/src/schema.ts`).
+    if (
+      "isVexiTable" in value &&
+      (value as { isVexiTable: unknown }).isVexiTable === true
+    ) {
+      tables[key] = value;
     }
   }
 

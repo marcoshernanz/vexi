@@ -1,7 +1,7 @@
-// In a real app, this would be: import { defineTable, v } from "vexi";
-import { defineTable, v } from "../sdk/src/index.js";
+// In a real app, this would be: import { createTable, v } from "vexi";
+import { createTable, v } from "../sdk/src/index.js";
 
-export const users = defineTable({
+export const users = createTable({
   id: v.number(),
   name: v.string().embed(), // Default embedding
   bio: v.optional(
@@ -14,7 +14,7 @@ export const users = defineTable({
   isActive: v.boolean(),
 });
 
-export const products = defineTable({
+export const products = createTable({
   sku: v.string(),
   name: v.string().embed(),
   description: v.string().embed(),

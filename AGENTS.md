@@ -71,7 +71,7 @@ Vexi is a monorepo containing an API, an SDK, and examples.
 - **Async**: Use `async/await` for all I/O.
 
 ### SDK (`sdk/`)
-- **Schema-First**: Types are inferred from runtime definitions (`defineTable`).
+- **Schema-First**: Types are inferred from runtime definitions (`createTable`).
 - **Proxy Pattern**: Used in `VexiClient` for dynamic table access.
 - **Compatibility**: Ensure changes work with `NodeNext` module resolution.
 

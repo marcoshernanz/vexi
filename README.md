@@ -40,19 +40,18 @@ The server will start on `http://localhost:3000`.
 Create a file named `schema.ts` in the root of your project. This is where you define your data model.
 
 ```typescript
-import { defineTable, v } from "./sdk/src/index"; // Adjust path to SDK
+import { createTable, v } from "./sdk/src/index"; // Adjust path to SDK
 
-export const users = defineTable({
-  id: v.number(),
+export const users = createTable({
   username: v.string(),
   isActive: v.boolean(),
-  bio: v.optional(v.string())
+  bio: v.optional(v.string()),
 });
 
-export const products = defineTable({
+export const products = createTable({
   sku: v.string(),
   price: v.number(),
-  inStock: v.boolean()
+  inStock: v.boolean(),
 });
 ```
 
@@ -85,17 +84,17 @@ Use the `createClient` function to interact with your data. Pass in your schema 
 **`main.ts`**
 
 ```typescript
-import { createClient } from "./sdk/src/client";
+import { createClient } from "./sdk/src/index";
 import { users, products } from "./schema"; // Import your table definitions
 
 // Initialize with your tables
-const db = createClient(
-  { users, products }, 
-  {
+const db = createClient({
+  schema: { users, products },
+  config: {
     baseUrl: "http://localhost:3000",
-    apiKey: "dev" // Placeholder for future auth
-  }
-);
+    apiKey: "dev", // Placeholder for future auth
+  },
+});
 
 async function run() {
   // 1. Insert Data
@@ -103,7 +102,7 @@ async function run() {
   await db.products.insert({
     sku: "ABC-123",
     price: 99.99,
-    inStock: true
+    inStock: true,
   });
 
   // 2. Search Data
@@ -118,9 +117,9 @@ run();
 
 ## API Reference
 
-### `defineTable(fields)`
+### `createTable(columns)`
 Helper to create strict table definitions.
-*   `fields`: An object where keys are column names and values are Vexi field types.
+*   `columns`: An object where keys are column names and values are Vexi field types.
 
 ### `v` (Field Builder)
 *   `v.string()`: UTF-8 String.

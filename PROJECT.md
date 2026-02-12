@@ -56,6 +56,10 @@ Notes:
 - Embedded fields: multiple fields can opt into `.embed()`. Vexi builds a single canonical per-row `vector` by concatenating the embedded field contents in a stable, labeled format and embedding that combined text.
 - Search return type: `search(...)` returns scored results: `Array<{ item: Row; score: number }>`.
 
+Implementation note:
+
+- The SDK's type surface reflects these v1 decisions even if early backend endpoints temporarily return simpler payloads while milestones are in progress.
+
 If chunking is enabled (e.g. `strategy: "recursive-markdown"`), the server maintains an internal chunk index and maps chunk hits back to the parent rows.
 
 ## Tables, Migrations, and Sync

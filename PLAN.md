@@ -174,6 +174,12 @@ Goal:
   - row output types include implicit `id: string`
   - search returns `{ item, score }[]` typed properly
 
+Note on runtime v1:
+
+- The SDK's types assume the v1 API will return inserted rows + ids and scored search results.
+- The starter backend currently returns `{ success, count }` for insert and does not implement search.
+- During Milestone 1 we prioritize the schema DSL and type surfaces; we will align runtime responses in later milestones.
+
 Work items:
 
 - Introduce a `Table` runtime wrapper in `sdk/src/schema.ts`.
@@ -189,7 +195,7 @@ Work items:
   - `type UpdatePatch<TTable> = Partial<Infer<TTable["columns"]>>`
   - `type SearchResult<TTable> = { item: Row<TTable>; score: number }`
 - Update exports in `sdk/src/index.ts`:
-  - Export `createTable` (and optionally keep `defineTable` as deprecated alias for one iteration).
+  - Export `createTable`.
   - Export helper types (`Row`, `InsertInput`, etc.) if they improve DX.
 - Update `example-app/schema.ts` to use `createTable`.
 - Update `example-app/main.ts` to use the updated `createClient` API types.

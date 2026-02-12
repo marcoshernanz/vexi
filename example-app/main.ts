@@ -16,11 +16,9 @@ async function main() {
 
   // This code is type-checked!
   // Try uncommenting the next line to see strictness:
-  // await db.users.insert({ id: "wrong-type", name: 123 });
+  // await db.users.insert({ name: 123 });
 
-  // Currently these are just mocks in the SDK
   await db.users.insert({
-    id: 1,
     name: "Alice",
     isActive: true,
   });
