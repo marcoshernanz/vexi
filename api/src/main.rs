@@ -34,7 +34,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/tables", post(create_table))
-        .route("/tables/:name/insert", post(insert_data))
+        .route("/tables/{name}/insert", post(insert_data))
         .layer(CorsLayer::permissive())
         .with_state(state);
 

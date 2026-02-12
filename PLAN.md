@@ -151,11 +151,14 @@ Work items:
 - Decide what we remove later (do not do large refactors yet):
   - `api/src/utils.rs` schema inference should not be used for v1 insert (schema must come from sync registry).
   - `CreateTableRequest.embedding` shape is too limited (single source field) and will be replaced.
+  - Fix any boot-time issues preventing the API from starting and basic insert path regressions.
 
 Acceptance criteria:
 
 - `sdk` builds + lints.
 - `api` builds.
+- API starts and `GET /health` returns 200.
+- `POST /tables/{name}/insert` works for basic JSON payloads (even before full schema registry work).
 - Plan of record for what will be deleted/rewired is documented (this plan).
 
 ---

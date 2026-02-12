@@ -124,10 +124,18 @@ pub async fn insert_data(
     }
     let arrow_schema = Arc::new(arrow_schema_result.unwrap());
 
-    // Use arrow_json to convert Vec<Value> to RecordBatch
-    let json_string = serde_json::to_string(&records).unwrap();
+    // Use arrow_json to convert JSON objects into RecordBatches.
+    //
+    // `arrow_json::ReaderBuilder` expects a stream of JSON *objects* (commonly newline-delimited
+    // JSON / NDJSON), not a single JSON array. Build an NDJSON payload.
+    let mut json_lines = String::new();
+    for record in &records {
+        json_lines.push_str(&serde_json::to_string(record).unwrap());
+        json_lines.push('\n');
+    }
+
     let decoder =
-        arrow_json::ReaderBuilder::new(arrow_schema.clone()).build(json_string.as_bytes());
+        arrow_json::ReaderBuilder::new(arrow_schema.clone()).build(json_lines.as_bytes());
 
     // Collect batches
     let batches_result: Result<Vec<_>, _> = decoder.unwrap().into_iter().collect();
