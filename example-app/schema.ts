@@ -2,7 +2,6 @@
 import { createTable, v } from "../sdk/src/index.js";
 
 export const users = createTable({
-  id: v.number(),
   name: v.string().embed(), // Default embedding
   bio: v.optional(
     v.string().embed({

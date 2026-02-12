@@ -1,6 +1,7 @@
 use crate::db::get_embedding_config;
 use crate::embeddings::generate_embeddings;
-use crate::models::{AppState, CreateTableRequest};
+use crate::models::{AppState, CreateTableRequest, SyncRequest};
+use crate::sync;
 use crate::utils::infer_schema_from_json;
 use arrow_array::RecordBatchIterator;
 use axum::{
@@ -8,12 +9,33 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 /// Health check endpoint
 pub async fn health_check() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "status": "ok" })))
+}
+
+/// Sync schema definitions with the server.
+///
+/// v1: this is the primary entrypoint used by `npx vexi sync`.
+pub async fn sync_tables(
+    State(state): State<AppState>,
+    Json(payload): Json<SyncRequest>,
+) -> impl IntoResponse {
+    match sync::sync_schema(&state, payload).await {
+        Ok((status, value)) => (status, Json(value)).into_response(),
+        Err((status, value)) => (status, Json(value)).into_response(),
+    }
+}
+
+/// List schema registry tables (debug endpoint).
+pub async fn list_registry(State(state): State<AppState>) -> impl IntoResponse {
+    match sync::list_registry(&state).await {
+        Ok((status, value)) => (status, Json(value)).into_response(),
+        Err((status, value)) => (status, Json(value)).into_response(),
+    }
 }
 
 /// Creates a new table and stores embedding configuration if provided.
@@ -22,7 +44,7 @@ pub async fn create_table(
     Json(payload): Json<CreateTableRequest>,
 ) -> impl IntoResponse {
     let config_table_name = "_vexi_metadata";
-    
+
     // Define schema for metadata table
     let config_schema = Arc::new(arrow_schema::Schema::new(vec![
         arrow_schema::Field::new("table_name", arrow_schema::DataType::Utf8, false),
@@ -93,10 +115,10 @@ pub async fn insert_data(
                 Ok(embeddings) => {
                     // Inject embeddings into records
                     for (i, record) in records.iter_mut().enumerate() {
-                        if let Some(obj) = record.as_object_mut() {
-                            if i < embeddings.len() {
-                                obj.insert("vector".to_string(), json!(embeddings[i]));
-                            }
+                        if let Some(obj) = record.as_object_mut()
+                            && i < embeddings.len()
+                        {
+                            obj.insert("vector".to_string(), json!(embeddings[i]));
                         }
                     }
                 }
@@ -112,7 +134,7 @@ pub async fn insert_data(
     }
 
     // 3. Insert into LanceDB
-    
+
     // Infer Schema from first record
     let arrow_schema_result = infer_schema_from_json(&records[0]);
     if let Err(e) = arrow_schema_result {
@@ -134,11 +156,10 @@ pub async fn insert_data(
         json_lines.push('\n');
     }
 
-    let decoder =
-        arrow_json::ReaderBuilder::new(arrow_schema.clone()).build(json_lines.as_bytes());
+    let decoder = arrow_json::ReaderBuilder::new(arrow_schema.clone()).build(json_lines.as_bytes());
 
     // Collect batches
-    let batches_result: Result<Vec<_>, _> = decoder.unwrap().into_iter().collect();
+    let batches_result: Result<Vec<_>, _> = decoder.unwrap().collect();
 
     if let Err(e) = batches_result {
         return (

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Generates embeddings for a batch of text using the OpenAI API.
 pub async fn generate_embeddings(
@@ -6,6 +6,13 @@ pub async fn generate_embeddings(
     model: &str,
     api_key: &str,
 ) -> Result<Vec<Vec<f32>>, String> {
+    if api_key.trim().is_empty() {
+        return Err(
+            "Missing OpenAI API key (set OPENAI_API_KEY or configure an embedding provider)"
+                .to_string(),
+        );
+    }
+
     let client = reqwest::Client::new();
     let res = client
         .post("https://api.openai.com/v1/embeddings")
