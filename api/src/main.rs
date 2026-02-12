@@ -3,9 +3,8 @@ mod embeddings;
 mod handlers;
 mod models;
 mod sync;
-mod utils;
 
-use crate::handlers::{create_table, health_check, insert_data, list_registry, sync_tables};
+use crate::handlers::{health_check, insert_data, list_registry, sync_tables};
 use crate::models::AppState;
 use axum::{
     Router,
@@ -35,14 +34,16 @@ async fn main() {
     let state = AppState { db, openai_api_key };
 
     // Build Router
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/health", get(health_check))
         .route("/sync", post(sync_tables))
-        .route("/registry", get(list_registry))
-        .route("/tables", post(create_table))
-        .route("/tables/{name}/insert", post(insert_data))
-        .layer(CorsLayer::permissive())
-        .with_state(state);
+        .route("/tables/{name}/insert", post(insert_data));
+
+    if env::var("VEXI_DEBUG").ok().as_deref() == Some("1") {
+        app = app.route("/registry", get(list_registry));
+    }
+
+    let app = app.layer(CorsLayer::permissive()).with_state(state);
 
     // Start Server
     // Bind on IPv6 unspecified so `localhost` (often ::1) works in Node fetch.

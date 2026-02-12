@@ -84,7 +84,7 @@ fn resolve_embedding_config(spec: &TableSpec) -> SyncResult<Option<ResolvedEmbed
     }))
 }
 
-fn arrow_schema_for_table(
+pub(crate) fn arrow_schema_for_table(
     spec: &TableSpec,
     resolved_embedding: Option<&ResolvedEmbeddingConfig>,
 ) -> SyncResult<arrow_schema::Schema> {

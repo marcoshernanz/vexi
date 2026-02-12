@@ -37,9 +37,8 @@ export type TableClient<TTable extends Table<TableDefinition>> = {
    *
    * The server generates an `id: string` for each inserted row.
    */
-  insert: (
-    data: InsertInput<TTable> | InsertInput<TTable>[],
-  ) => Promise<void>;
+  insert(data: InsertInput<TTable>): Promise<Row<TTable>>;
+  insert(data: InsertInput<TTable>[]): Promise<Row<TTable>[]>;
 
   /**
    * Update an existing record by implicit id.
@@ -95,6 +94,12 @@ type ErrorBody = {
   error?: string;
 };
 
+type InsertResponseBody = {
+  ok?: boolean;
+  rows?: unknown;
+  error?: string;
+};
+
 async function readErrorBody(response: Response): Promise<ErrorBody> {
   return (await response.json().catch(() => ({}))) as ErrorBody;
 }
@@ -124,32 +129,73 @@ export function createClient<DB extends DatabaseDefinition>(
           );
         }
 
-        const tableClient: TableClient<Table<TableDefinition>> = {
-          insert: async (data) => {
-            const records = Array.isArray(data) ? data : [data];
-            const response = await fetch(
-              `${config.baseUrl}/tables/${tableName}/insert`,
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${config.apiKey}`,
-                },
-                body: JSON.stringify(records),
+        type AnyTable = Table<TableDefinition>;
+        type AnyInsertInput = InsertInput<AnyTable>;
+        type AnyRow = Row<AnyTable>;
+
+        function insert(data: AnyInsertInput): Promise<AnyRow>;
+        function insert(data: AnyInsertInput[]): Promise<AnyRow[]>;
+        async function insert(
+          data: AnyInsertInput | AnyInsertInput[],
+        ): Promise<AnyRow | AnyRow[]> {
+          const wasArray = Array.isArray(data);
+          const records = wasArray ? data : [data];
+          const response = await fetch(
+            `${config.baseUrl}/tables/${tableName}/insert`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${config.apiKey}`,
               },
+              body: JSON.stringify({ records }),
+            },
+          );
+
+          if (!response.ok) {
+            const errorBody = await readErrorBody(response);
+            throw new Error(
+              `Insert failed for "${tableName}": ${errorBody.error ?? response.statusText}`,
             );
+          }
 
-            if (!response.ok) {
-              const errorBody = await readErrorBody(response);
-              throw new Error(
-                `Insert failed for "${tableName}": ${errorBody.error ?? response.statusText}`,
-              );
-            }
+          const body = (await response
+            .json()
+            .catch(() => ({}))) as InsertResponseBody;
 
-            // v1: API currently returns `{ success, count }`.
-            // We'll evolve this to return inserted rows + ids.
-            await response.json().catch(() => undefined);
-          },
+          if (!body.ok) {
+            throw new Error(
+              `Insert failed for "${tableName}": ${body.error ?? response.statusText}`,
+            );
+          }
+
+          if (!Array.isArray(body.rows)) {
+            throw new Error(
+              `Insert failed for "${tableName}": response missing rows`,
+            );
+          }
+
+          const rows = body.rows as Row<Table<TableDefinition>>[];
+          if (rows.length !== records.length) {
+            throw new Error(
+              `Insert failed for "${tableName}": expected ${String(records.length)} row(s) but got ${String(rows.length)}`,
+            );
+          }
+
+          if (!wasArray && rows.length === 0) {
+            throw new Error(
+              `Insert failed for "${tableName}": response returned 0 rows`,
+            );
+          }
+
+          if (wasArray) {
+            return rows;
+          }
+          return rows[0] as AnyRow;
+        }
+
+        const tableClient: TableClient<Table<TableDefinition>> = {
+          insert,
 
           update: (_id, _patch) => {
             return Promise.reject(

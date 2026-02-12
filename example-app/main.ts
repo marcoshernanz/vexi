@@ -18,13 +18,14 @@ async function main() {
   // Try uncommenting the next line to see strictness:
   // await db.users.insert({ name: 123 });
 
-  await db.users.insert({
+  const insertedUser = await db.users.insert({
     name: "Alice",
     isActive: true,
   });
+  console.log("Inserted user:", insertedUser);
 
   // Batch insert products
-  await db.products.insert([
+  const insertedProducts = await db.products.insert([
     {
       sku: "P001",
       name: "Wireless Headphones",
@@ -46,7 +47,7 @@ async function main() {
       tags: "sale",
     },
   ]);
-  console.log("Inserted products batch");
+  console.log("Inserted products:", insertedProducts);
 
   const results = await db.users.search("Alice");
   console.log("Search Results:", results);

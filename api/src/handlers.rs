@@ -1,8 +1,7 @@
-use crate::db::get_embedding_config;
+use crate::db::get_registry_entry;
 use crate::embeddings::generate_embeddings;
-use crate::models::{AppState, CreateTableRequest, SyncRequest};
+use crate::models::{AppState, InsertRequest, SyncRequest};
 use crate::sync;
-use crate::utils::infer_schema_from_json;
 use arrow_array::RecordBatchIterator;
 use axum::{
     extract::{Path, State},
@@ -38,55 +37,13 @@ pub async fn list_registry(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Creates a new table and stores embedding configuration if provided.
-pub async fn create_table(
-    State(state): State<AppState>,
-    Json(payload): Json<CreateTableRequest>,
-) -> impl IntoResponse {
-    let config_table_name = "_vexi_metadata";
-
-    // Define schema for metadata table
-    let config_schema = Arc::new(arrow_schema::Schema::new(vec![
-        arrow_schema::Field::new("table_name", arrow_schema::DataType::Utf8, false),
-        arrow_schema::Field::new("config", arrow_schema::DataType::Utf8, false),
-    ]));
-
-    // Ensure metadata table exists
-    let _ = state
-        .db
-        .create_empty_table(config_table_name, config_schema.clone())
-        .execute()
-        .await;
-
-    // Insert metadata
-    if let Ok(tbl) = state.db.open_table(config_table_name).execute().await {
-        let config_json = serde_json::to_string(&payload.embedding).unwrap_or_default();
-
-        let batch = arrow_array::RecordBatch::try_new(
-            config_schema,
-            vec![
-                Arc::new(arrow_array::StringArray::from(vec![payload.name.clone()])),
-                Arc::new(arrow_array::StringArray::from(vec![config_json])),
-            ],
-        )
-        .unwrap();
-
-        let reader = RecordBatchIterator::new(vec![Ok(batch.clone())], batch.schema());
-        tbl.add(Box::new(reader)).execute().await.unwrap();
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({ "success": true, "name": payload.name })),
-    )
-}
-
 /// Inserts data into a table, automatically generating embeddings if configured.
 pub async fn insert_data(
     Path(name): Path<String>,
     State(state): State<AppState>,
-    Json(mut records): Json<Vec<Value>>,
+    Json(payload): Json<InsertRequest>,
 ) -> impl IntoResponse {
+    let mut records = payload.records;
     if records.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -95,56 +52,188 @@ pub async fn insert_data(
             .into_response();
     }
 
-    // 1. Fetch embedding config for this table
-    let embedding_config = get_embedding_config(&state.db, &name).await;
+    // 1. Load schema + embedding config from the v1 registry.
+    let Some((table_spec, resolved_embedding, _schema_version)) =
+        get_registry_entry(&state.db, &name).await
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Unknown table \"{}\". Run `vexi sync` first.", name) })),
+        )
+            .into_response();
+    };
 
-    // 2. If config exists, generate embeddings
-    if let Some(config) = embedding_config {
-        // Collect texts to embed
-        let texts: Vec<String> = records
-            .iter()
-            .filter_map(|r| {
-                r.get(&config.source_field)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .collect();
+    // 2. Validate records and inject server-generated ids.
+    for record in &mut records {
+        let Some(obj) = record.as_object_mut() else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Each record must be a JSON object" })),
+            )
+                .into_response();
+        };
 
-        if !texts.is_empty() {
-            match generate_embeddings(&texts, &config.model, &state.openai_api_key).await {
-                Ok(embeddings) => {
-                    // Inject embeddings into records
-                    for (i, record) in records.iter_mut().enumerate() {
-                        if let Some(obj) = record.as_object_mut()
-                            && i < embeddings.len()
-                        {
-                            obj.insert("vector".to_string(), json!(embeddings[i]));
-                        }
-                    }
-                }
-                Err(e) => {
+        if obj.contains_key("id") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "Column \"id\" is reserved (server-generated)" })),
+            )
+                .into_response();
+        }
+
+        // Reject unknown keys.
+        for key in obj.keys() {
+            if !table_spec.columns.contains_key(key) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": format!("Unknown column \"{}\" for table \"{}\"", key, name)
+                    })),
+                )
+                    .into_response();
+            }
+        }
+
+        // Ensure required fields exist + validate types.
+        for (col_name, col) in &table_spec.columns {
+            let value = obj.get(col_name);
+            if value.is_none() {
+                if !col.is_optional {
                     return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": format!("Missing required column \"{}\"", col_name)
+                        })),
+                    )
+                        .into_response();
+                }
+                continue;
+            }
+            let value = value.unwrap();
+            if value.is_null() {
+                if !col.is_optional {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": format!("Column \"{}\" cannot be null", col_name)
+                        })),
+                    )
+                        .into_response();
+                }
+                continue;
+            }
+
+            let ok = match col.kind {
+                crate::models::ColumnKind::String => value.is_string(),
+                crate::models::ColumnKind::Number => value.is_number(),
+                crate::models::ColumnKind::Boolean => value.is_boolean(),
+            };
+
+            if !ok {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": format!("Invalid type for column \"{}\"", col_name)
+                    })),
+                )
+                    .into_response();
+            }
+        }
+
+        obj.insert(
+            "id".to_string(),
+            Value::String(uuid::Uuid::new_v4().to_string()),
+        );
+    }
+
+    // 3. If embeddings are configured, generate vectors.
+    //
+    // v1 dev UX: allow inserts without an OpenAI key by skipping embeddings.
+    // The row will be written without a `vector`, and users can reindex later.
+    if let Some(embed_cfg) = resolved_embedding.as_ref()
+        && !state.openai_api_key.is_empty()
+    {
+        let mut inputs: Vec<String> = vec![];
+        let mut input_row_indexes: Vec<usize> = vec![];
+
+        for (row_index, record) in records.iter().enumerate() {
+            let obj = record.as_object().expect("record validated as object");
+            let mut combined = String::new();
+            for field in &embed_cfg.fields {
+                let Some(v) = obj.get(field) else {
+                    continue;
+                };
+                let Some(s) = v.as_str() else {
+                    continue;
+                };
+                let s = s.trim();
+                if s.is_empty() {
+                    continue;
+                }
+                combined.push_str(field);
+                combined.push_str(":\n");
+                combined.push_str(s);
+                combined.push_str("\n\n");
+            }
+
+            if combined.is_empty() {
+                continue;
+            }
+
+            inputs.push(combined);
+            input_row_indexes.push(row_index);
+        }
+
+        if !inputs.is_empty() {
+            let embeddings = generate_embeddings(&inputs, &embed_cfg.model, &state.openai_api_key)
+                .await
+                .map_err(|e| {
+                    (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({ "error": format!("Embedding failed: {}", e) })),
                     )
-                        .into_response();
+                });
+
+            let embeddings = match embeddings {
+                Ok(v) => v,
+                Err(resp) => return resp.into_response(),
+            };
+
+            if embeddings.len() != input_row_indexes.len() {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": format!(
+                            "Embedding provider returned {} vectors for {} inputs",
+                            embeddings.len(),
+                            input_row_indexes.len()
+                        )
+                    })),
+                )
+                    .into_response();
+            }
+
+            for (embedding_index, row_index) in input_row_indexes.into_iter().enumerate() {
+                let record = &mut records[row_index];
+                if let Some(obj) = record.as_object_mut() {
+                    obj.insert("vector".to_string(), json!(embeddings[embedding_index]));
                 }
             }
         }
     }
 
-    // 3. Insert into LanceDB
-
-    // Infer Schema from first record
-    let arrow_schema_result = infer_schema_from_json(&records[0]);
-    if let Err(e) = arrow_schema_result {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("Schema inference failed: {}", e) })),
-        )
-            .into_response();
-    }
-    let arrow_schema = Arc::new(arrow_schema_result.unwrap());
+    // 4. Insert into LanceDB using the synced schema (no inference).
+    let arrow_schema =
+        match crate::sync::arrow_schema_for_table(&table_spec, resolved_embedding.as_ref()) {
+            Ok(schema) => Arc::new(schema),
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to build Arrow schema: {}", e) })),
+                )
+                    .into_response();
+            }
+        };
 
     // Use arrow_json to convert JSON objects into RecordBatches.
     //
@@ -170,42 +259,35 @@ pub async fn insert_data(
     }
     let batches = batches_result.unwrap();
 
-    // Create table if not exists, else open
-    let table = state.db.open_table(&name).execute().await;
+    // The table should exist after `vexi sync`.
+    let t = state
+        .db
+        .open_table(&name)
+        .execute()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": format!("Table \"{}\" does not exist. Run `vexi sync` first. ({})", name, e)
+                })),
+            )
+        });
 
-    match table {
-        Ok(t) => {
-            let reader =
-                RecordBatchIterator::new(batches.into_iter().map(Ok), arrow_schema.clone());
-            if let Err(e) = t.add(Box::new(reader)).execute().await {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() })),
-                )
-                    .into_response();
-            }
-        }
-        Err(_) => {
-            let reader =
-                RecordBatchIterator::new(batches.into_iter().map(Ok), arrow_schema.clone());
-            if let Err(e) = state
-                .db
-                .create_table(&name, Box::new(reader))
-                .execute()
-                .await
-            {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e.to_string() })),
-                )
-                    .into_response();
-            }
-        }
+    let t = match t {
+        Ok(v) => v,
+        Err(resp) => return resp.into_response(),
+    };
+
+    let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), arrow_schema.clone());
+    if let Err(e) = t.add(Box::new(reader)).execute().await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response();
     }
 
-    (
-        StatusCode::OK,
-        Json(json!({ "success": true, "count": records.len() })),
-    )
-        .into_response()
+    // v1 response: return inserted rows (at least ids).
+    (StatusCode::OK, Json(json!({ "ok": true, "rows": records }))).into_response()
 }
