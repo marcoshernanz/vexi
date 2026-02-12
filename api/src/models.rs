@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 pub struct AppState {
     pub db: Connection,
     pub gemini_api_key: String,
+    pub vector_dim: i32,
 }
 
 /// Request body for inserting rows.
@@ -15,6 +16,30 @@ pub struct AppState {
 #[serde(rename_all = "camelCase")]
 pub struct InsertRequest {
     pub records: Vec<Value>,
+}
+
+/// Request body for vector search.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchRequest {
+    pub query: String,
+    pub top_k: Option<usize>,
+}
+
+/// One search result item returned by the API.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResultItem {
+    pub score: f32,
+    pub item: Value,
+}
+
+/// Response body for vector search.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchResponse {
+    pub ok: bool,
+    pub results: Vec<SearchResultItem>,
 }
 
 /// A supported column kind in the v1 schema JSON.
@@ -67,6 +92,12 @@ pub struct ResolvedEmbeddingConfig {
     pub model: String,
     pub strategy: Option<String>,
     pub fields: Vec<String>,
+    #[serde(default = "default_vector_dim")]
+    pub dim: i32,
+}
+
+fn default_vector_dim() -> i32 {
+    768
 }
 
 /// One action taken as part of a `/sync` request.

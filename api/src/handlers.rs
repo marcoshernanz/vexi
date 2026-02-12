@@ -1,6 +1,8 @@
 use crate::db::get_registry_entry;
 use crate::embeddings::generate_embeddings;
-use crate::models::{AppState, InsertRequest, SyncRequest};
+use crate::models::{
+    AppState, InsertRequest, SearchRequest, SearchResponse, SearchResultItem, SyncRequest,
+};
 use crate::sync;
 use arrow_array::RecordBatchIterator;
 use axum::{
@@ -8,6 +10,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json},
 };
+use futures::TryStreamExt;
+use lancedb::query::{ExecutableQuery, QueryBase};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -214,6 +218,20 @@ pub async fn insert_data(
             }
 
             for (embedding_index, row_index) in input_row_indexes.into_iter().enumerate() {
+                if embeddings[embedding_index].len() != embed_cfg.dim as usize {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": format!(
+                                "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                                name,
+                                embed_cfg.dim,
+                                embeddings[embedding_index].len()
+                            )
+                        })),
+                    )
+                        .into_response();
+                }
                 let record = &mut records[row_index];
                 if let Some(obj) = record.as_object_mut() {
                     obj.insert("vector".to_string(), json!(embeddings[embedding_index]));
@@ -290,4 +308,214 @@ pub async fn insert_data(
 
     // v1 response: return inserted rows (at least ids).
     (StatusCode::OK, Json(json!({ "ok": true, "rows": records }))).into_response()
+}
+
+/// Perform a vector search against a table.
+pub async fn search_table(
+    Path(name): Path<String>,
+    State(state): State<AppState>,
+    Json(payload): Json<SearchRequest>,
+) -> impl IntoResponse {
+    let query = payload.query.trim().to_string();
+    if query.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Query must be a non-empty string" })),
+        )
+            .into_response();
+    }
+
+    let top_k = payload.top_k.unwrap_or(10);
+    if top_k == 0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "topK must be greater than 0" })),
+        )
+            .into_response();
+    }
+
+    // 1. Load schema + embedding config from the v1 registry.
+    let Some((_table_spec, resolved_embedding, _schema_version)) =
+        get_registry_entry(&state.db, &name).await
+    else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("Unknown table \"{}\". Run `vexi sync` first.", name) })),
+        )
+            .into_response();
+    };
+
+    let Some(embed_cfg) = resolved_embedding.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!(
+                    "Table \"{}\" has no embedded fields. Add .embed() to at least one string column and run `vexi sync`.",
+                    name
+                )
+            })),
+        )
+            .into_response();
+    };
+
+    if state.gemini_api_key.trim().is_empty() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": "Missing GEMINI_API_KEY. Set it on the API server to enable search."
+            })),
+        )
+            .into_response();
+    }
+
+    // 2. Embed the query.
+    let embeddings = generate_embeddings(&[query], &embed_cfg.model, &state.gemini_api_key)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Embedding failed: {}", e) })),
+            )
+        });
+    let embeddings = match embeddings {
+        Ok(v) => v,
+        Err(resp) => return resp.into_response(),
+    };
+
+    let Some(query_vector) = embeddings.into_iter().next() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "Embedding provider returned no vectors" })),
+        )
+            .into_response();
+    };
+
+    if query_vector.len() != embed_cfg.dim as usize {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!(
+                    "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                    name,
+                    embed_cfg.dim,
+                    query_vector.len()
+                )
+            })),
+        )
+            .into_response();
+    }
+
+    // 3. Query LanceDB.
+    let t = match state.db.open_table(&name).execute().await {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": format!("Table \"{}\" does not exist. Run `vexi sync` first. ({})", name, e)
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let q = match t.query().limit(top_k).nearest_to(query_vector) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Invalid query vector: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let stream = match q.execute().await {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Search query failed: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let batches = match stream.try_collect::<Vec<_>>().await {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Search stream failed: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    // 4. Convert Arrow batches to JSON rows.
+    let mut all_rows: Vec<Value> = vec![];
+    for batch in &batches {
+        let mut writer = arrow_json::ArrayWriter::new(Vec::<u8>::new());
+        if let Err(e) = writer.write(batch) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to encode search results: {}", e) })),
+            )
+                .into_response();
+        }
+        if let Err(e) = writer.finish() {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": format!("Failed to finalize search results: {}", e) })),
+            )
+                .into_response();
+        }
+        let buf = writer.into_inner();
+        let arr: Value = match serde_json::from_slice(&buf) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": format!("Failed to parse search results JSON: {}", e) })),
+                )
+                    .into_response();
+            }
+        };
+
+        let Some(items) = arr.as_array() else {
+            continue;
+        };
+        all_rows.extend(items.iter().cloned());
+    }
+
+    // 5. Project into { item, score }.
+    // LanceDB includes an automatic `_distance` column for vector search.
+    let mut results: Vec<SearchResultItem> = vec![];
+    for row in all_rows {
+        let Some(mut obj) = row.as_object().cloned() else {
+            continue;
+        };
+
+        let distance = obj
+            .remove("_distance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        // v1: return score as a monotonic inverse of distance.
+        let score = 1.0 / (1.0 + distance);
+
+        // Don't expose internal vector column.
+        let _ = obj.remove("vector");
+
+        // Don't expose other internal scoring columns.
+        let _ = obj.remove("_score");
+
+        results.push(SearchResultItem {
+            score,
+            item: Value::Object(obj),
+        });
+    }
+
+    let resp = SearchResponse { ok: true, results };
+    (StatusCode::OK, Json(resp)).into_response()
 }

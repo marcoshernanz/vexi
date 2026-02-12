@@ -36,7 +36,7 @@ User-facing, end-to-end:
 - Automatic embeddings:
   - Generated on insert/update on the server
   - Query embedding on search
-- Pluggable embedding provider (v1 includes OpenAI + generic HTTP provider)
+- Embedding provider: Gemini (v1 only)
 
 Non-goals for v1 (explicitly out of scope):
 
@@ -122,7 +122,7 @@ Milestones are ordered and sized so each can be completed in a single focused se
 1. SDK schema DSL: `createTable`, typing, stable serialization
 2. CLI sync: robust schema loading + one-shot sync request
 3. API sync: schema registry + safe migrations
-4. Embeddings: provider trait + OpenAI + generic HTTP provider
+4. Embeddings: Gemini
 5. Insert: validation + implicit id + embeddings + LanceDB write
 6. Search: query embedding + vector search + scored results
 7. Update: patch by id + re-embedding + persistence semantics

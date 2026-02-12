@@ -19,7 +19,10 @@ fn normalize_option_string(value: &Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn resolve_embedding_config(spec: &TableSpec) -> SyncResult<Option<ResolvedEmbeddingConfig>> {
+fn resolve_embedding_config(
+    spec: &TableSpec,
+    vector_dim: i32,
+) -> SyncResult<Option<ResolvedEmbeddingConfig>> {
     let mut embedded_fields: Vec<String> = vec![];
     let mut model_hint: Option<String> = None;
     let mut strategy_hint: Option<String> = None;
@@ -81,6 +84,7 @@ fn resolve_embedding_config(spec: &TableSpec) -> SyncResult<Option<ResolvedEmbed
         model,
         strategy: strategy_hint,
         fields: embedded_fields,
+        dim: vector_dim,
     }))
 }
 
@@ -126,12 +130,19 @@ pub(crate) fn arrow_schema_for_table(
         fields.push(arrow_schema::Field::new(name, dt, col.is_optional));
     }
 
-    if resolved_embedding.is_some() {
+    if let Some(embed) = resolved_embedding {
         // v1: store embeddings in a single canonical vector column.
+        if embed.dim <= 0 {
+            return Err(format!(
+                "Invalid vector dimension {} (must be > 0)",
+                embed.dim
+            ));
+        }
+
         let item = arrow_schema::Field::new("item", arrow_schema::DataType::Float32, true);
         fields.push(arrow_schema::Field::new(
             "vector",
-            arrow_schema::DataType::List(Arc::new(item)),
+            arrow_schema::DataType::FixedSizeList(Arc::new(item), embed.dim),
             true,
         ));
     }
@@ -325,7 +336,7 @@ async fn sync_one_table(
         );
     }
 
-    let resolved_embedding = resolve_embedding_config(table_spec)?;
+    let resolved_embedding = resolve_embedding_config(table_spec, state.vector_dim)?;
     let desired_arrow_schema = Arc::new(arrow_schema_for_table(
         table_spec,
         resolved_embedding.as_ref(),

@@ -4,7 +4,7 @@ mod handlers;
 mod models;
 mod sync;
 
-use crate::handlers::{health_check, insert_data, list_registry, sync_tables};
+use crate::handlers::{health_check, insert_data, list_registry, search_table, sync_tables};
 use crate::models::AppState;
 use axum::{
     Router,
@@ -26,18 +26,30 @@ async fn main() {
     // an embedding operation is requested.
     let gemini_api_key = env::var("GEMINI_API_KEY").unwrap_or_default();
 
+    // v1: we keep the vector dimension explicit to satisfy LanceDB's vector search
+    // requirement for fixed-size-list vectors.
+    let vector_dim: i32 = env::var("VEXI_VECTOR_DIM")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(768);
+
     // Initialize Database
     let db = lancedb::connect(&database_path).execute().await.unwrap();
     println!("Connected to LanceDB at {}", database_path);
 
     // Initialize State
-    let state = AppState { db, gemini_api_key };
+    let state = AppState {
+        db,
+        gemini_api_key,
+        vector_dim,
+    };
 
     // Build Router
     let mut app = Router::new()
         .route("/health", get(health_check))
         .route("/sync", post(sync_tables))
-        .route("/tables/{name}/insert", post(insert_data));
+        .route("/tables/{name}/insert", post(insert_data))
+        .route("/tables/{name}/search", post(search_table));
 
     if env::var("VEXI_DEBUG").ok().as_deref() == Some("1") {
         app = app.route("/registry", get(list_registry));

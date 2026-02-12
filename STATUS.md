@@ -35,3 +35,9 @@ Last updated: 2026-02-12
 - Remove remaining legacy/back-compat references in docs/plans (`PLAN.md`, `PROJECT.md`, `README.md`).
 - Add search endpoint(s) and SDK search once insert+sync are stable.
 - Consider reindex workflow for embedding config changes.
+
+## Search v1 status
+
+- Implemented `POST /tables/{name}/search` (API) and `db.<table>.search()` (SDK).
+- Vector search uses LanceDB `nearest_to(...)` and expects a `vector: FixedSizeList<Float32, DIM>` column.
+- DIM is configured via `VEXI_VECTOR_DIM` (default 768). Existing tables created before this change may need a fresh `.lancedb` or a migration.

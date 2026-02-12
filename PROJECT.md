@@ -101,17 +101,11 @@ Intended behavior:
 - When the developer calls `search("...")`, the server embeds the query (same provider/model) and runs similarity search.
 - Chunking/splitting strategies (e.g. `recursive-markdown`) should be supported server-side so the client stays simple.
 
-## Pluggable Models / Providers
+## Embeddings
 
-Users should be able to choose any embedding model.
+v1 uses Gemini embeddings only.
 
-Implementation direction (conceptual):
-
-- Define an `EmbeddingProvider` trait in Rust.
-- Provide built-in implementations for common hosted APIs.
-- Allow a generic HTTP provider (point at a user-hosted embeddings endpoint).
-
-Provider/model selection is primarily server-configured (env/config) so deployments can change providers without application code changes. The schema can optionally specify a `model` hint per embedded field (e.g. `models/text-embedding-004`) for portability and to make intent explicit.
+Provider/model selection is primarily server-configured (env/config). The schema can optionally specify a `model` hint per embedded field (e.g. `models/text-embedding-004`) for portability and to make intent explicit.
 
 ## What "E2E Type Safety" Means Here
 

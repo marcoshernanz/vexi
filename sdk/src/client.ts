@@ -100,6 +100,12 @@ type InsertResponseBody = {
   error?: string;
 };
 
+type SearchResponseBody = {
+  ok?: boolean;
+  results?: unknown;
+  error?: string;
+};
+
 async function readErrorBody(response: Response): Promise<ErrorBody> {
   return (await response.json().catch(() => ({}))) as ErrorBody;
 }
@@ -203,9 +209,48 @@ export function createClient<DB extends DatabaseDefinition>(
             );
           },
 
-          search: (_query, _options) => {
-            // TODO: Implement search logic using config.baseUrl and config.apiKey
-            return Promise.resolve([]);
+          search: async (query, options) => {
+            const response = await fetch(
+              `${config.baseUrl}/tables/${tableName}/search`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(config.apiKey
+                    ? { Authorization: `Bearer ${config.apiKey}` }
+                    : {}),
+                },
+                body: JSON.stringify({
+                  query,
+                  topK: options?.topK,
+                }),
+              },
+            );
+
+            if (!response.ok) {
+              const errorBody = await readErrorBody(response);
+              throw new Error(
+                `Search failed for "${tableName}": ${errorBody.error ?? response.statusText}`,
+              );
+            }
+
+            const body = (await response
+              .json()
+              .catch(() => ({}))) as SearchResponseBody;
+
+            if (!body.ok) {
+              throw new Error(
+                `Search failed for "${tableName}": ${body.error ?? response.statusText}`,
+              );
+            }
+
+            if (!Array.isArray(body.results)) {
+              throw new Error(
+                `Search failed for "${tableName}": response missing results`,
+              );
+            }
+
+            return body.results as SearchResult<Table<TableDefinition>>[];
           },
         };
 
