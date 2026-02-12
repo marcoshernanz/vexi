@@ -148,10 +148,10 @@ pub async fn insert_data(
 
     // 3. If embeddings are configured, generate vectors.
     //
-    // v1 dev UX: allow inserts without an OpenAI key by skipping embeddings.
+    // v1 dev UX: allow inserts without a Gemini key by skipping embeddings.
     // The row will be written without a `vector`, and users can reindex later.
     if let Some(embed_cfg) = resolved_embedding.as_ref()
-        && !state.openai_api_key.is_empty()
+        && !state.gemini_api_key.is_empty()
     {
         let mut inputs: Vec<String> = vec![];
         let mut input_row_indexes: Vec<usize> = vec![];
@@ -185,7 +185,7 @@ pub async fn insert_data(
         }
 
         if !inputs.is_empty() {
-            let embeddings = generate_embeddings(&inputs, &embed_cfg.model, &state.openai_api_key)
+            let embeddings = generate_embeddings(&inputs, &embed_cfg.model, &state.gemini_api_key)
                 .await
                 .map_err(|e| {
                     (

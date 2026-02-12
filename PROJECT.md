@@ -35,7 +35,7 @@ export const users = createTable({
   name: v.string().embed(),
   bio: v.optional(
     v.string().embed({
-      model: "openai/text-embedding-3-small",
+      model: "models/text-embedding-004",
       strategy: "recursive-markdown",
     }),
   ),
@@ -111,7 +111,7 @@ Implementation direction (conceptual):
 - Provide built-in implementations for common hosted APIs.
 - Allow a generic HTTP provider (point at a user-hosted embeddings endpoint).
 
-Provider/model selection is primarily server-configured (env/config) so deployments can change providers without application code changes. The schema can optionally specify a `model` hint per embedded field (e.g. `openai/text-embedding-3-small`) for portability and to make intent explicit.
+Provider/model selection is primarily server-configured (env/config) so deployments can change providers without application code changes. The schema can optionally specify a `model` hint per embedded field (e.g. `models/text-embedding-004`) for portability and to make intent explicit.
 
 ## What "E2E Type Safety" Means Here
 

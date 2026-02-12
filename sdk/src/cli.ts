@@ -46,7 +46,6 @@ type SyncRunSummary = {
   schemaPath: string;
   url: string;
   tables: string[];
-  method: "sync" | "legacy";
   response?: unknown;
   errors?: {
     table?: string;
@@ -146,7 +145,6 @@ cli
           schemaPath,
           url: baseUrl,
           tables: [],
-          method: "sync",
           errors: [{ message: msg }],
         };
         console.log(JSON.stringify(summary, null, 2));
@@ -177,7 +175,6 @@ cli
           schemaPath,
           url: baseUrl,
           tables: [],
-          method: "sync",
           errors: [{ message }],
         };
         console.log(JSON.stringify(summary, null, 2));
@@ -201,7 +198,6 @@ cli
           schemaPath,
           url: baseUrl,
           tables: [],
-          method: "sync",
           response: { ok: true, actions: [] },
         };
         console.log(JSON.stringify(summary, null, 2));
@@ -215,15 +211,7 @@ cli
       tables,
     };
 
-    // v1 target: a single request to `/sync`.
-    //
-    // The starter backend does not implement `/sync` yet (Milestone 3). To keep the current
-    // repo functional, we fall back to the legacy per-table `/tables` endpoint when `/sync`
-    // is missing.
     const syncUrl = endpoint(baseUrl, "/sync");
-    const legacyUrl = endpoint(baseUrl, "/tables");
-
-    let usedMethod: SyncRunSummary["method"] = "sync";
     let responseJson: unknown;
     const errors: SyncRunSummary["errors"] = [];
 
@@ -238,62 +226,22 @@ cli
       });
 
       if (response.status === 404) {
-        usedMethod = "legacy";
-      } else if (!response.ok) {
+        throw new Error(
+          "Sync failed: server does not support POST /sync. This CLI is v1-only and does not support legacy endpoints.",
+        );
+      }
+
+      if (!response.ok) {
         const text = await response.text();
         throw new Error(
           `Sync failed: ${String(response.status)} ${response.statusText}: ${text}`,
         );
-      } else {
-        responseJson = await response.json().catch(() => undefined);
       }
+
+      responseJson = await response.json().catch(() => undefined);
     } catch (err) {
-      // Network errors should not immediately force legacy mode; we only fall back on 404.
       const message = err instanceof Error ? err.message : "Sync failed.";
       errors.push({ message });
-      usedMethod = "sync";
-    }
-
-    if (usedMethod === "legacy") {
-      if (!options.json) {
-        console.log(
-          "Server does not support /sync yet; falling back to legacy /tables (per-table).",
-        );
-      }
-
-      for (const [name, schema] of Object.entries(tables)) {
-        if (!options.json) {
-          console.log(`Pushing table: ${name}`);
-        }
-        try {
-          const response = await fetch(legacyUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...getAuthHeaders(options.apiKey),
-            },
-            body: JSON.stringify({ name, schema }),
-          });
-
-          if (!response.ok) {
-            const text = await response.text();
-            errors.push({ table: name, message: text });
-            if (!options.json) {
-              console.error(`Failed to sync ${name}: ${text}`);
-            }
-          } else if (!options.json) {
-            const res = await response.json().catch(() => undefined);
-            console.log(`Success: ${name}`, res);
-          }
-        } catch (err) {
-          const message =
-            err instanceof Error ? err.message : "Network error syncing table.";
-          errors.push({ table: name, message });
-          if (!options.json) {
-            console.error(`Network error syncing ${name}:`, err);
-          }
-        }
-      }
     }
 
     const ok = errors.length === 0;
@@ -303,7 +251,6 @@ cli
       schemaPath,
       url: baseUrl,
       tables: tableNames,
-      method: usedMethod,
       response: responseJson,
       ...(errors.length > 0 ? { errors } : {}),
     };
@@ -311,11 +258,7 @@ cli
     if (options.json) {
       console.log(JSON.stringify(summary, null, 2));
     } else {
-      if (usedMethod === "sync") {
-        console.log(`Synced ${String(tableNames.length)} table(s).`);
-      } else {
-        console.log(`Synced ${String(tableNames.length)} table(s) (legacy mode).`);
-      }
+      console.log(`Synced ${String(tableNames.length)} table(s).`);
     }
 
     if (!ok) {

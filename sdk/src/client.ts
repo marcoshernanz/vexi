@@ -17,7 +17,7 @@ export type ClientConfig = {
    * v1: the server may ignore this, but we keep it in the client surface so we don't
    * have to introduce a breaking change once auth lands.
    */
-  apiKey: string;
+  apiKey?: string;
   /**
    * Base URL for the Vexi API server.
    *
@@ -146,7 +146,7 @@ export function createClient<DB extends DatabaseDefinition>(
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                Authorization: `Bearer ${config.apiKey}`,
+                ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
               },
               body: JSON.stringify({ records }),
             },

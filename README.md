@@ -92,7 +92,7 @@ const db = createClient({
   schema: { users, products },
   config: {
     baseUrl: "http://localhost:3000",
-    apiKey: "dev", // Placeholder for future auth
+    // apiKey: "..." // Optional (reserved for future auth)
   },
 });
 
@@ -134,6 +134,6 @@ Helper to create strict table definitions.
 
 ## Architecture
 
-*   **API**: Fastify server handling HTTP requests and managing the LanceDB instance.
+*   **API**: Axum server handling HTTP requests and managing the LanceDB instance.
 *   **SDK**: TypeScript library providing the `v` builder, types, and the `vexi` CLI.
 *   **Database**: LanceDB (embedded vector database), storing data in `.lancedb/`.

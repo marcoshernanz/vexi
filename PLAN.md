@@ -145,7 +145,7 @@ Work items:
   - Ensure `cd sdk && npm install && npm run lint && npm run build` passes.
 - API:
   - Ensure `cd api && cargo build` passes.
-  - Ensure `cargo run` starts (today it requires `OPENAI_API_KEY`; keep for now).
+  - Ensure `cargo run` starts.
 - Example app:
   - Ensure `example-app` can run with current code (even if `search` is stubbed).
 - Decide what we remove later (do not do large refactors yet):
@@ -218,7 +218,7 @@ Goal:
 
 Milestone 2 note:
 
-- The CLI will prefer `POST /sync` (one-shot), but until Milestone 3 lands it should gracefully fall back to the current per-table `POST /tables` endpoint when the server returns 404.
+- No backward compatibility: the CLI is v1-only and requires `POST /sync`.
 
 Work items:
 
@@ -337,39 +337,23 @@ Acceptance criteria:
 
 ---
 
-## Milestone 4 - Embeddings v1 (Provider Trait + OpenAI + HTTP)
+## Milestone 4 - Embeddings v1 (Gemini)
 
 Goal:
 
-- Backend supports multiple embedding providers behind a single abstraction.
-- Provider selection is server-configured, with schema-level model hints.
+- Embeddings use the Gemini API.
+- Server reads `GEMINI_API_KEY` and calls `batchEmbedContents`.
 
 Work items:
 
-- Refactor `api/src/embeddings.rs` into:
-  - `trait EmbeddingProvider { async fn embed(&self, model: &str, inputs: &[String]) -> Result<Vec<Vec<f32>>, Error>; }`
-  - `OpenAiProvider` implementation
-  - `HttpProvider` implementation
+- Implement Gemini embedding calls in `api/src/embeddings.rs`.
 - Configuration (load once at startup, store in `AppState`):
-  - `VEXI_EMBED_PROVIDER=openai|http`
-  - OpenAI:
-    - `VEXI_OPENAI_API_KEY` (fallback to `OPENAI_API_KEY` for backward compatibility)
-    - `VEXI_OPENAI_BASE_URL` optional
-  - HTTP provider:
-    - `VEXI_EMBEDDINGS_URL`
-    - optional headers via `VEXI_EMBEDDINGS_HEADERS_JSON`
-- Standardize request/response shape for HTTP provider:
-  - Request: `{ "model": "...", "input": ["..."] }`
-  - Response: `{ "data": [{"embedding": [0.1, ...]}] }` (match OpenAI-ish shape)
-- Add robust behavior:
-  - batch size limit
-  - retries on transient errors
-  - clear error messages that bubble to HTTP responses
+  - `GEMINI_API_KEY`
+- Default model when schema provides no hint: `models/text-embedding-004`.
 
 Acceptance criteria:
 
-- OpenAI provider still works.
-- HTTP provider can be tested with a stub endpoint.
+- Gemini embedding works end-to-end.
 - Embedding errors return structured 5xx with a readable message.
 
 ---

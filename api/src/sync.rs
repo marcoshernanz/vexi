@@ -75,7 +75,7 @@ fn resolve_embedding_config(spec: &TableSpec) -> SyncResult<Option<ResolvedEmbed
 
     // v1: the server is the source of truth. If the schema provides no model hint,
     // fall back to a server default.
-    let model = model_hint.unwrap_or_else(|| "openai/text-embedding-3-small".to_string());
+    let model = model_hint.unwrap_or_else(|| "models/text-embedding-004".to_string());
 
     Ok(Some(ResolvedEmbeddingConfig {
         model,

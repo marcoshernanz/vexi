@@ -5,7 +5,7 @@ export const users = createTable({
   name: v.string().embed(), // Default embedding
   bio: v.optional(
     v.string().embed({
-      model: "openai/text-embedding-3-small",
+      model: "models/text-embedding-004",
       strategy: "recursive-markdown",
     }),
   ),

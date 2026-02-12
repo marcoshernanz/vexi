@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 #[derive(Clone)]
 pub struct AppState {
     pub db: Connection,
-    pub openai_api_key: String,
+    pub gemini_api_key: String,
 }
 
 /// Request body for inserting rows.

@@ -22,16 +22,16 @@ async fn main() {
     dotenv().ok();
 
     let database_path = env::var("LANCEDB_URI").unwrap_or_else(|_| ".lancedb".to_string());
-    // v1: the API can start without an OpenAI key; it is only required when
+    // v1: the API can start without a Gemini key; it is only required when
     // an embedding operation is requested.
-    let openai_api_key = env::var("OPENAI_API_KEY").unwrap_or_default();
+    let gemini_api_key = env::var("GEMINI_API_KEY").unwrap_or_default();
 
     // Initialize Database
     let db = lancedb::connect(&database_path).execute().await.unwrap();
     println!("Connected to LanceDB at {}", database_path);
 
     // Initialize State
-    let state = AppState { db, openai_api_key };
+    let state = AppState { db, gemini_api_key };
 
     // Build Router
     let mut app = Router::new()

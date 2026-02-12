@@ -5,7 +5,7 @@ Vexi is a monorepo containing an API, an SDK, and examples.
 
 ## 1. Project Structure
 
-- **`api/`**: The Vexi API server (Fastify, Zod, LanceDB).
+- **`api/`**: The Vexi API server (Axum, LanceDB).
 - **`sdk/`**: The Vexi TypeScript SDK (Proxy pattern, Type inference).
 - **`example-app/`**: Usage examples.
 
@@ -65,8 +65,8 @@ Vexi is a monorepo containing an API, an SDK, and examples.
 ## 4. Specific Guidelines
 
 ### API (`api/`)
-- **Validation**: Use **Zod** for all I/O validation.
-- **Fastify**: Use `try/catch` in handlers. Return structured errors.
+- **Validation**: Validate all I/O; return structured errors.
+- **Axum**: Use explicit error handling in handlers. Return structured errors.
 - **Pattern**: Request Schema -> Validate -> Logic -> Response.
 - **Async**: Use `async/await` for all I/O.
 
