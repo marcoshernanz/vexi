@@ -3,8 +3,8 @@ use crate::db::{
     ensure_schema_registry, get_registry_entry, list_registry_tables, put_registry_entry,
 };
 use crate::models::{
-    ColumnKind, ResolvedEmbeddingConfig, SyncAction, SyncActionKind, SyncErrorResponse,
-    SyncRequest, SyncResponse, SyncTableError, SyncWarning, SyncWarningKind, TableSpec,
+    ApiErrorResponse, ColumnKind, ResolvedEmbeddingConfig, SyncAction, SyncActionKind, SyncRequest,
+    SyncResponse, SyncTableError, SyncWarning, SyncWarningKind, TableSpec,
 };
 use axum::http::StatusCode;
 use serde_json::json;
@@ -237,17 +237,15 @@ pub async fn sync_schema(
     }
 
     if let Err(e) = ensure_schema_registry(&state.db).await {
-        let err = SyncErrorResponse {
-            error: "failed to initialize schema registry".to_string(),
-            errors: vec![SyncTableError {
-                table: "_registry".to_string(),
-                message: e,
-            }],
-        };
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            serde_json::to_value(err)
-                .unwrap_or(json!({ "error": "failed to initialize schema registry" })),
+            json!(ApiErrorResponse::with_details(
+                "schema_registry_init_failed",
+                "Failed to initialize schema registry",
+                json!({
+                    "errors": [{ "table": "_registry", "message": e }]
+                }),
+            )),
         ));
     }
 
@@ -283,13 +281,13 @@ pub async fn sync_schema(
         for table_name in created_tables {
             let _ = state.db.drop_table(&table_name, &[]).await;
         }
-        let err = SyncErrorResponse {
-            error: "sync failed".to_string(),
-            errors,
-        };
         return Err((
             StatusCode::BAD_REQUEST,
-            serde_json::to_value(err).unwrap_or(json!({ "error": "sync failed" })),
+            json!(ApiErrorResponse::with_details(
+                "sync_failed",
+                "Sync failed",
+                json!({ "errors": errors }),
+            )),
         ));
     }
 
@@ -305,7 +303,13 @@ pub async fn sync_schema(
         .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": format!("failed to persist schema registry for {}: {}", table_name, e) }),
+                json!(ApiErrorResponse::new(
+                    "registry_persist_failed",
+                    format!(
+                        "Failed to persist schema registry for {}: {}",
+                        table_name, e
+                    ),
+                )),
             )
         })?;
     }
@@ -448,8 +452,14 @@ async fn sync_one_table(
 pub async fn list_registry(
     state: &crate::models::AppState,
 ) -> Result<(StatusCode, serde_json::Value), (StatusCode, serde_json::Value)> {
-    let tables = list_registry_tables(&state.db)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": e })))?;
+    let tables = list_registry_tables(&state.db).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!(ApiErrorResponse::new(
+                "list_registry_failed",
+                format!("Failed to list registry tables: {}", e),
+            )),
+        )
+    })?;
     Ok((StatusCode::OK, json!({ "ok": true, "tables": tables })))
 }

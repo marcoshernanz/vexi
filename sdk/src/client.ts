@@ -91,8 +91,28 @@ export type CreateClientOptions<DB extends DatabaseDefinition> = {
 };
 
 type ErrorBody = {
-  error?: string;
+  error?:
+    | string
+    | {
+        code?: string;
+        message?: string;
+        details?: unknown;
+      };
 };
+
+function getErrorMessage(error: ErrorBody["error"]): string | undefined {
+  if (!error) {
+    return undefined;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  const maybeMessage = (error as { message?: unknown }).message;
+  if (typeof maybeMessage === "string" && maybeMessage.trim() !== "") {
+    return maybeMessage;
+  }
+  return undefined;
+}
 
 type InsertResponseBody = {
   ok?: boolean;
@@ -164,12 +184,12 @@ export function createClient<DB extends DatabaseDefinition>(
             },
           );
 
-          if (!response.ok) {
-            const errorBody = await readErrorBody(response);
-            throw new Error(
-              `Insert failed for "${tableName}": ${errorBody.error ?? response.statusText}`,
-            );
-          }
+            if (!response.ok) {
+              const errorBody = await readErrorBody(response);
+              throw new Error(
+                `Insert failed for "${tableName}": ${getErrorMessage(errorBody.error) ?? response.statusText}`,
+              );
+            }
 
           const body = (await response
             .json()
@@ -227,7 +247,7 @@ export function createClient<DB extends DatabaseDefinition>(
             if (!response.ok) {
               const errorBody = await readErrorBody(response);
               throw new Error(
-                `Update failed for "${tableName}": ${errorBody.error ?? response.statusText}`,
+                `Update failed for "${tableName}": ${getErrorMessage(errorBody.error) ?? response.statusText}`,
               );
             }
 
@@ -271,7 +291,7 @@ export function createClient<DB extends DatabaseDefinition>(
             if (!response.ok) {
               const errorBody = await readErrorBody(response);
               throw new Error(
-                `Search failed for "${tableName}": ${errorBody.error ?? response.statusText}`,
+                `Search failed for "${tableName}": ${getErrorMessage(errorBody.error) ?? response.statusText}`,
               );
             }
 

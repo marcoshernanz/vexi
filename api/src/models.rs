@@ -190,10 +190,47 @@ pub struct SyncTableError {
     pub message: String,
 }
 
-/// Error response for `POST /sync`.
+/// Standard API error shape.
+///
+/// v1: all non-2xx responses should return `{ "error": { ... } }`.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct SyncErrorResponse {
-    pub error: String,
-    pub errors: Vec<SyncTableError>,
+pub struct ApiError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+/// Standard API error response wrapper.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiErrorResponse {
+    pub error: ApiError,
+}
+
+impl ApiErrorResponse {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            error: ApiError {
+                code: code.into(),
+                message: message.into(),
+                details: None,
+            },
+        }
+    }
+
+    pub fn with_details(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        details: Value,
+    ) -> Self {
+        Self {
+            error: ApiError {
+                code: code.into(),
+                message: message.into(),
+                details: Some(details),
+            },
+        }
+    }
 }

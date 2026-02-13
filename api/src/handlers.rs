@@ -2,15 +2,15 @@ use crate::chunking;
 use crate::db::get_registry_entry;
 use crate::embeddings::generate_embeddings;
 use crate::models::{
-    AppState, InsertRequest, ReindexRequest, ReindexResponse, SearchRequest, SearchResponse,
-    SearchResultItem, SyncRequest, UpdatePatch, UpdateResponse,
+    ApiErrorResponse, AppState, InsertRequest, ReindexRequest, ReindexResponse, SearchRequest,
+    SearchResponse, SearchResultItem, SyncRequest, UpdatePatch, UpdateResponse,
 };
 use crate::sync;
 use arrow_array::{RecordBatch, RecordBatchIterator};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
 };
 use futures::TryStreamExt;
 use lancedb::query::Select;
@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 const DEFAULT_REINDEX_EMBED_BATCH_SIZE: usize = 32;
 
-type ReindexError = (StatusCode, Json<Value>);
+type ReindexError = Response;
 
 struct ReindexVectorBatchCtx<'a> {
     state: &'a AppState,
@@ -35,6 +35,10 @@ struct ReindexVectorBatchCtx<'a> {
 struct ReindexVectorWriteStats {
     rows_updated: usize,
     vectors_written: usize,
+}
+
+fn api_error(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
+    (status, Json(ApiErrorResponse::new(code, message))).into_response()
 }
 
 fn escape_sql_string(value: &str) -> String {
@@ -98,52 +102,50 @@ pub async fn insert_data(
 ) -> impl IntoResponse {
     let mut records = payload.records;
     if records.is_empty() {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "No data to insert" })),
-        )
-            .into_response();
+            "invalid_request",
+            "No data to insert",
+        );
     }
 
     // 1. Load schema + embedding config from the v1 registry.
     let Some((table_spec, resolved_embedding, _schema_version)) =
         get_registry_entry(&state.db, &name).await
     else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("Unknown table \"{}\". Run `vexi sync` first.", name) })),
-        )
-            .into_response();
+            "unknown_table",
+            format!("Unknown table \"{}\". Run `vexi sync` first.", name),
+        );
     };
 
     // 2. Validate records and inject server-generated ids.
     for record in &mut records {
         let Some(obj) = record.as_object_mut() else {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "Each record must be a JSON object" })),
-            )
-                .into_response();
+                "invalid_record",
+                "Each record must be a JSON object",
+            );
         };
 
         if obj.contains_key("id") {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "Column \"id\" is reserved (server-generated)" })),
-            )
-                .into_response();
+                "reserved_column",
+                "Column \"id\" is reserved (server-generated)",
+            );
         }
 
         // Reject unknown keys.
         for key in obj.keys() {
             if !table_spec.columns.contains_key(key) {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "error": format!("Unknown column \"{}\" for table \"{}\"", key, name)
-                    })),
-                )
-                    .into_response();
+                    "unknown_column",
+                    format!("Unknown column \"{}\" for table \"{}\"", key, name),
+                );
             }
         }
 
@@ -152,26 +154,22 @@ pub async fn insert_data(
             let value = obj.get(col_name);
             if value.is_none() {
                 if !col.is_optional {
-                    return (
+                    return api_error(
                         StatusCode::BAD_REQUEST,
-                        Json(json!({
-                            "error": format!("Missing required column \"{}\"", col_name)
-                        })),
-                    )
-                        .into_response();
+                        "missing_required_column",
+                        format!("Missing required column \"{}\"", col_name),
+                    );
                 }
                 continue;
             }
             let value = value.unwrap();
             if value.is_null() {
                 if !col.is_optional {
-                    return (
+                    return api_error(
                         StatusCode::BAD_REQUEST,
-                        Json(json!({
-                            "error": format!("Column \"{}\" cannot be null", col_name)
-                        })),
-                    )
-                        .into_response();
+                        "null_required_column",
+                        format!("Column \"{}\" cannot be null", col_name),
+                    );
                 }
                 continue;
             }
@@ -183,13 +181,11 @@ pub async fn insert_data(
             };
 
             if !ok {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "error": format!("Invalid type for column \"{}\"", col_name)
-                    })),
-                )
-                    .into_response();
+                    "invalid_column_type",
+                    format!("Invalid type for column \"{}\"", col_name),
+                );
             }
         }
 
@@ -255,9 +251,10 @@ pub async fn insert_data(
                         generate_embeddings(&chunk_texts, &embed_cfg.model, &state.gemini_api_key)
                             .await
                             .map_err(|e| {
-                                (
+                                api_error(
                                     StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(json!({ "error": format!("Embedding failed: {}", e) })),
+                                    "embedding_failed",
+                                    format!("Embedding failed: {}", e),
                                 )
                             });
 
@@ -267,35 +264,31 @@ pub async fn insert_data(
                     };
 
                     if embeddings.len() != chunk_meta.len() {
-                        return (
+                        return api_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({
-                                "error": format!(
-                                    "Embedding provider returned {} vectors for {} inputs",
-                                    embeddings.len(),
-                                    chunk_meta.len()
-                                )
-                            })),
-                        )
-                            .into_response();
+                            "embedding_count_mismatch",
+                            format!(
+                                "Embedding provider returned {} vectors for {} inputs",
+                                embeddings.len(),
+                                chunk_meta.len()
+                            ),
+                        );
                     }
 
                     for (i, (chunk_id, parent_id, ordinal, source_fields)) in
                         chunk_meta.into_iter().enumerate()
                     {
                         if embeddings[i].len() != embed_cfg.dim as usize {
-                            return (
+                            return api_error(
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(json!({
-                                    "error": format!(
-                                        "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
-                                        name,
-                                        embed_cfg.dim,
-                                        embeddings[i].len()
-                                    )
-                                })),
-                            )
-                                .into_response();
+                                "embedding_dim_mismatch",
+                                format!(
+                                    "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                                    name,
+                                    embed_cfg.dim,
+                                    embeddings[i].len()
+                                ),
+                            );
                         }
 
                         chunk_rows.push(json!({
@@ -328,9 +321,10 @@ pub async fn insert_data(
                         generate_embeddings(&inputs, &embed_cfg.model, &state.gemini_api_key)
                             .await
                             .map_err(|e| {
-                                (
+                                api_error(
                                     StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(json!({ "error": format!("Embedding failed: {}", e) })),
+                                    "embedding_failed",
+                                    format!("Embedding failed: {}", e),
                                 )
                             });
 
@@ -340,33 +334,29 @@ pub async fn insert_data(
                     };
 
                     if embeddings.len() != input_row_indexes.len() {
-                        return (
+                        return api_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({
-                                "error": format!(
-                                    "Embedding provider returned {} vectors for {} inputs",
-                                    embeddings.len(),
-                                    input_row_indexes.len()
-                                )
-                            })),
-                        )
-                            .into_response();
+                            "embedding_count_mismatch",
+                            format!(
+                                "Embedding provider returned {} vectors for {} inputs",
+                                embeddings.len(),
+                                input_row_indexes.len()
+                            ),
+                        );
                     }
 
                     for (embedding_index, row_index) in input_row_indexes.into_iter().enumerate() {
                         if embeddings[embedding_index].len() != embed_cfg.dim as usize {
-                            return (
+                            return api_error(
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(json!({
-                                    "error": format!(
-                                        "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
-                                        name,
-                                        embed_cfg.dim,
-                                        embeddings[embedding_index].len()
-                                    )
-                                })),
-                            )
-                                .into_response();
+                                "embedding_dim_mismatch",
+                                format!(
+                                    "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                                    name,
+                                    embed_cfg.dim,
+                                    embeddings[embedding_index].len()
+                                ),
+                            );
                         }
                         let record = &mut records[row_index];
                         if let Some(obj) = record.as_object_mut() {
@@ -383,11 +373,11 @@ pub async fn insert_data(
         match crate::sync::arrow_schema_for_table(&table_spec, resolved_embedding.as_ref()) {
             Ok(schema) => Arc::new(schema),
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to build Arrow schema: {}", e) })),
-                )
-                    .into_response();
+                    "arrow_schema_build_failed",
+                    format!("Failed to build Arrow schema: {}", e),
+                );
             }
         };
 
@@ -407,28 +397,25 @@ pub async fn insert_data(
     let batches_result: Result<Vec<_>, _> = decoder.unwrap().collect();
 
     if let Err(e) = batches_result {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("JSON to Arrow conversion failed: {}", e) })),
-        )
-            .into_response();
+            "json_to_arrow_failed",
+            format!("JSON to Arrow conversion failed: {}", e),
+        );
     }
     let batches = batches_result.unwrap();
 
     // The table should exist after `vexi sync`.
-    let t = state
-        .db
-        .open_table(&name)
-        .execute()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": format!("Table \"{}\" does not exist. Run `vexi sync` first. ({})", name, e)
-                })),
-            )
-        });
+    let t = state.db.open_table(&name).execute().await.map_err(|e| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "table_missing",
+            format!(
+                "Table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                name, e
+            ),
+        )
+    });
 
     let t = match t {
         Ok(v) => v,
@@ -437,11 +424,11 @@ pub async fn insert_data(
 
     let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), arrow_schema.clone());
     if let Err(e) = t.add(Box::new(reader)).execute().await {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e.to_string() })),
-        )
-            .into_response();
+            "lancedb_write_failed",
+            e.to_string(),
+        );
     }
 
     // 5. If chunking is enabled, write chunk rows.
@@ -451,45 +438,43 @@ pub async fn insert_data(
         let Some((_table_spec, resolved_embedding, _schema_version)) =
             get_registry_entry(&state.db, &name).await
         else {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Missing schema registry entry during chunk write" })),
-            )
-                .into_response();
+                "missing_registry_entry",
+                "Missing schema registry entry during chunk write",
+            );
         };
 
         let Some(embed_cfg) = resolved_embedding.as_ref() else {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Missing embedding config during chunk write" })),
-            )
-                .into_response();
+                "missing_embedding_config",
+                "Missing embedding config during chunk write",
+            );
         };
 
         let chunk_schema = match chunking::arrow_schema_for_chunk_table(embed_cfg) {
             Ok(s) => Arc::new(s),
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e })),
-                )
-                    .into_response();
+                    "chunk_schema_build_failed",
+                    e,
+                );
             }
         };
 
         let t_chunks = match state.db.open_table(&chunk_table).execute().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": format!(
-                            "Chunk table \"{}\" does not exist. Run `vexi sync` first. ({})",
-                            chunk_table, e
-                        )
-                    })),
-                )
-                    .into_response();
+                    "chunk_table_missing",
+                    format!(
+                        "Chunk table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                        chunk_table, e
+                    ),
+                );
             }
         };
 
@@ -504,13 +489,11 @@ pub async fn insert_data(
         {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": format!("Chunk JSON to Arrow reader failed: {}", e)
-                    })),
-                )
-                    .into_response();
+                    "chunk_json_to_arrow_reader_failed",
+                    format!("Chunk JSON to Arrow reader failed: {}", e),
+                );
             }
         };
 
@@ -518,23 +501,21 @@ pub async fn insert_data(
         let batches = match batches_result {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": format!("Chunk JSON to Arrow conversion failed: {}", e)
-                    })),
-                )
-                    .into_response();
+                    "chunk_json_to_arrow_failed",
+                    format!("Chunk JSON to Arrow conversion failed: {}", e),
+                );
             }
         };
 
         let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), chunk_schema.clone());
         if let Err(e) = t_chunks.add(Box::new(reader)).execute().await {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Chunk insert failed: {}", e) })),
-            )
-                .into_response();
+                "chunk_insert_failed",
+                format!("Chunk insert failed: {}", e),
+            );
         }
     }
 
@@ -550,63 +531,60 @@ pub async fn search_table(
 ) -> impl IntoResponse {
     let query = payload.query.trim().to_string();
     if query.is_empty() {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Query must be a non-empty string" })),
-        )
-            .into_response();
+            "invalid_request",
+            "Query must be a non-empty string",
+        );
     }
 
     let top_k = payload.top_k.unwrap_or(10);
     if top_k == 0 {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "topK must be greater than 0" })),
-        )
-            .into_response();
+            "invalid_request",
+            "topK must be greater than 0",
+        );
     }
 
     // 1. Load schema + embedding config from the v1 registry.
     let Some((_table_spec, resolved_embedding, _schema_version)) =
         get_registry_entry(&state.db, &name).await
     else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("Unknown table \"{}\". Run `vexi sync` first.", name) })),
-        )
-            .into_response();
+            "unknown_table",
+            format!("Unknown table \"{}\". Run `vexi sync` first.", name),
+        );
     };
 
     let Some(embed_cfg) = resolved_embedding.as_ref() else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": format!(
-                    "Table \"{}\" has no embedded fields. Add .embed() to at least one string column and run `vexi sync`.",
-                    name
-                )
-            })),
-        )
-            .into_response();
+            "no_embedded_fields",
+            format!(
+                "Table \"{}\" has no embedded fields. Add .embed() to at least one string column and run `vexi sync`.",
+                name
+            ),
+        );
     };
 
     if state.gemini_api_key.trim().is_empty() {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": "Missing GEMINI_API_KEY. Set it on the API server to enable search."
-            })),
-        )
-            .into_response();
+            "missing_gemini_api_key",
+            "Missing GEMINI_API_KEY. Set it on the API server to enable search.",
+        );
     }
 
     // 2. Embed the query.
     let embeddings = generate_embeddings(&[query], &embed_cfg.model, &state.gemini_api_key)
         .await
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Embedding failed: {}", e) })),
+                "embedding_failed",
+                format!("Embedding failed: {}", e),
             )
         });
     let embeddings = match embeddings {
@@ -615,26 +593,24 @@ pub async fn search_table(
     };
 
     let Some(query_vector) = embeddings.into_iter().next() else {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Embedding provider returned no vectors" })),
-        )
-            .into_response();
+            "embedding_no_vectors",
+            "Embedding provider returned no vectors",
+        );
     };
 
     if query_vector.len() != embed_cfg.dim as usize {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": format!(
-                    "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
-                    name,
-                    embed_cfg.dim,
-                    query_vector.len()
-                )
-            })),
-        )
-            .into_response();
+            "embedding_dim_mismatch",
+            format!(
+                "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                name,
+                embed_cfg.dim,
+                query_vector.len()
+            ),
+        );
     }
 
     // 3. Query LanceDB.
@@ -646,13 +622,14 @@ pub async fn search_table(
         let t_chunks = match state.db.open_table(&chunk_table).execute().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": format!("Chunk table \"{}\" does not exist. Run `vexi sync` first. ({})", chunk_table, e)
-                    })),
-                )
-                    .into_response();
+                    "chunk_table_missing",
+                    format!(
+                        "Chunk table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                        chunk_table, e
+                    ),
+                );
             }
         };
 
@@ -664,44 +641,40 @@ pub async fn search_table(
         {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Invalid query vector: {}", e) })),
-                )
-                    .into_response();
+                    "invalid_query_vector",
+                    format!("Invalid query vector: {}", e),
+                );
             }
         };
 
         let stream = match q.execute().await {
             Ok(s) => s,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Search query failed: {}", e) })),
-                )
-                    .into_response();
+                    "search_failed",
+                    format!("Search query failed: {}", e),
+                );
             }
         };
 
         let batches = match stream.try_collect::<Vec<_>>().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Search stream failed: {}", e) })),
-                )
-                    .into_response();
+                    "search_stream_failed",
+                    format!("Search stream failed: {}", e),
+                );
             }
         };
 
         let rows = match record_batches_to_json_rows(&batches) {
             Ok(v) => v,
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e })),
-                )
-                    .into_response();
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "arrow_to_json_failed", e);
             }
         };
 
@@ -736,13 +709,14 @@ pub async fn search_table(
         let t_base = match state.db.open_table(&name).execute().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "error": format!("Table \"{}\" does not exist. Run `vexi sync` first. ({})", name, e)
-                    })),
-                )
-                    .into_response();
+                    "table_missing",
+                    format!(
+                        "Table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                        name, e
+                    ),
+                );
             }
         };
 
@@ -757,33 +731,29 @@ pub async fn search_table(
         let stream = match t_base.query().only_if(&predicate).execute().await {
             Ok(s) => s,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to hydrate rows: {}", e) })),
-                )
-                    .into_response();
+                    "hydrate_failed",
+                    format!("Failed to hydrate rows: {}", e),
+                );
             }
         };
 
         let batches = match stream.try_collect::<Vec<_>>().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Hydration stream failed: {}", e) })),
-                )
-                    .into_response();
+                    "hydrate_stream_failed",
+                    format!("Hydration stream failed: {}", e),
+                );
             }
         };
 
         let hydrated = match record_batches_to_json_rows(&batches) {
             Ok(v) => v,
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e })),
-                )
-                    .into_response();
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "arrow_to_json_failed", e);
             }
         };
 
@@ -817,57 +787,54 @@ pub async fn search_table(
         let t = match state.db.open_table(&name).execute().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "error": format!("Table \"{}\" does not exist. Run `vexi sync` first. ({})", name, e)
-                    })),
-                )
-                    .into_response();
+                    "table_missing",
+                    format!(
+                        "Table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                        name, e
+                    ),
+                );
             }
         };
 
         let q = match t.query().limit(top_k).nearest_to(query_vector) {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Invalid query vector: {}", e) })),
-                )
-                    .into_response();
+                    "invalid_query_vector",
+                    format!("Invalid query vector: {}", e),
+                );
             }
         };
 
         let stream = match q.execute().await {
             Ok(s) => s,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Search query failed: {}", e) })),
-                )
-                    .into_response();
+                    "search_failed",
+                    format!("Search query failed: {}", e),
+                );
             }
         };
 
         let batches = match stream.try_collect::<Vec<_>>().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Search stream failed: {}", e) })),
-                )
-                    .into_response();
+                    "search_stream_failed",
+                    format!("Search stream failed: {}", e),
+                );
             }
         };
 
         let all_rows = match record_batches_to_json_rows(&batches) {
             Ok(v) => v,
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e })),
-                )
-                    .into_response();
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "arrow_to_json_failed", e);
             }
         };
 
@@ -912,58 +879,56 @@ pub async fn update_row(
     Json(patch): Json<UpdatePatch>,
 ) -> impl IntoResponse {
     if patch.is_empty() {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Update patch must be a non-empty object" })),
-        )
-            .into_response();
+            "invalid_request",
+            "Update patch must be a non-empty object",
+        );
     }
 
     // 1. Load schema + embedding config from the v1 registry.
     let Some((table_spec, resolved_embedding, _schema_version)) =
         get_registry_entry(&state.db, &name).await
     else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("Unknown table \"{}\". Run `vexi sync` first.", name) })),
-        )
-            .into_response();
+            "unknown_table",
+            format!("Unknown table \"{}\". Run `vexi sync` first.", name),
+        );
     };
 
     // 2. Validate patch keys + values.
     for (key, value) in &patch {
         if key == "id" {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "Column \"id\" is reserved (server-generated)" })),
-            )
-                .into_response();
+                "reserved_column",
+                "Column \"id\" is reserved (server-generated)",
+            );
         }
         if key == "vector" {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "Column \"vector\" is reserved (server-generated)" })),
-            )
-                .into_response();
+                "reserved_column",
+                "Column \"vector\" is reserved (server-generated)",
+            );
         }
 
         let Some(col) = table_spec.columns.get(key) else {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": format!("Unknown column \"{}\" for table \"{}\"", key, name)
-                })),
-            )
-                .into_response();
+                "unknown_column",
+                format!("Unknown column \"{}\" for table \"{}\"", key, name),
+            );
         };
 
         if value.is_null() {
             if !col.is_optional {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({ "error": format!("Column \"{}\" cannot be null", key) })),
-                )
-                    .into_response();
+                    "null_required_column",
+                    format!("Column \"{}\" cannot be null", key),
+                );
             }
             continue;
         }
@@ -975,11 +940,11 @@ pub async fn update_row(
         };
 
         if !ok {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": format!("Invalid type for column \"{}\"", key) })),
-            )
-                .into_response();
+                "invalid_column_type",
+                format!("Invalid type for column \"{}\"", key),
+            );
         }
     }
 
@@ -987,13 +952,14 @@ pub async fn update_row(
     let t = match state.db.open_table(&name).execute().await {
         Ok(v) => v,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": format!("Table \"{}\" does not exist. Run `vexi sync` first. ({})", name, e)
-                })),
-            )
-                .into_response();
+                "table_missing",
+                format!(
+                    "Table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                    name, e
+                ),
+            );
         }
     };
 
@@ -1002,58 +968,57 @@ pub async fn update_row(
     let stream = match t.query().only_if(&predicate).limit(2).execute().await {
         Ok(s) => s,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to fetch row: {}", e) })),
-            )
-                .into_response();
+                "fetch_row_failed",
+                format!("Failed to fetch row: {}", e),
+            );
         }
     };
 
     let batches = match stream.try_collect::<Vec<_>>().await {
         Ok(v) => v,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to read row stream: {}", e) })),
-            )
-                .into_response();
+                "row_stream_failed",
+                format!("Failed to read row stream: {}", e),
+            );
         }
     };
 
     let rows = match record_batches_to_json_rows(&batches) {
         Ok(v) => v,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e })),
-            )
-                .into_response();
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, "arrow_to_json_failed", e);
         }
     };
 
     if rows.is_empty() {
-        return (
+        return api_error(
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("Row \"{}\" not found in table \"{}\"", id, name) })),
-        )
-            .into_response();
+            "row_not_found",
+            format!("Row \"{}\" not found in table \"{}\"", id, name),
+        );
     }
 
     if rows.len() > 1 {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Multiple rows found for id \"{}\" in table \"{}\"", id, name) })),
-        )
-            .into_response();
+            "multiple_rows_for_id",
+            format!(
+                "Multiple rows found for id \"{}\" in table \"{}\"",
+                id, name
+            ),
+        );
     }
 
     let Some(existing_obj) = rows[0].as_object() else {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "Row is not a JSON object" })),
-        )
-            .into_response();
+            "invalid_row",
+            "Row is not a JSON object",
+        );
     };
 
     // 5. Build updated row object (full row, not partial).
@@ -1070,9 +1035,10 @@ pub async fn update_row(
                 } else {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "error": format!("Stored row is missing required column \"{}\"", col_name)
-                        })),
+                        Json(ApiErrorResponse::new(
+                            "stored_row_missing_column",
+                            format!("Stored row is missing required column \"{}\"", col_name),
+                        )),
                     )
                         .into_response();
                 }
@@ -1088,11 +1054,11 @@ pub async fn update_row(
             continue;
         };
         if value.is_null() && !col.is_optional {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": format!("Column \"{}\" cannot be null", key) })),
-            )
-                .into_response();
+                "null_required_column",
+                format!("Column \"{}\" cannot be null", key),
+            );
         }
         updated.insert(key, value);
     }
@@ -1100,18 +1066,18 @@ pub async fn update_row(
     // Validate final required fields are non-null.
     for (col_name, col) in &table_spec.columns {
         let Some(value) = updated.get(col_name) else {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Updated row missing column \"{}\"", col_name) })),
-            )
-                .into_response();
+                "updated_row_missing_column",
+                format!("Updated row missing column \"{}\"", col_name),
+            );
         };
         if value.is_null() && !col.is_optional {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": format!("Column \"{}\" cannot be null", col_name) })),
-            )
-                .into_response();
+                "null_required_column",
+                format!("Column \"{}\" cannot be null", col_name),
+            );
         }
     }
 
@@ -1129,13 +1095,11 @@ pub async fn update_row(
 
         if touches_embedded_field {
             if state.gemini_api_key.trim().is_empty() {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": "Missing GEMINI_API_KEY. Set it on the API server to update embedded fields."
-                    })),
-                )
-                    .into_response();
+                    "missing_gemini_api_key",
+                    "Missing GEMINI_API_KEY. Set it on the API server to update embedded fields.",
+                );
             }
 
             let mut combined = String::new();
@@ -1163,9 +1127,10 @@ pub async fn update_row(
                     generate_embeddings(&[combined], &embed_cfg.model, &state.gemini_api_key)
                         .await
                         .map_err(|e| {
-                            (
+                            api_error(
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(json!({ "error": format!("Embedding failed: {}", e) })),
+                                "embedding_failed",
+                                format!("Embedding failed: {}", e),
                             )
                         });
 
@@ -1175,26 +1140,24 @@ pub async fn update_row(
                 };
 
                 let Some(vector) = embeddings.into_iter().next() else {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": "Embedding provider returned no vectors" })),
-                    )
-                        .into_response();
+                        "embedding_no_vectors",
+                        "Embedding provider returned no vectors",
+                    );
                 };
 
                 if vector.len() != embed_cfg.dim as usize {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "error": format!(
-                                "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
-                                name,
-                                embed_cfg.dim,
-                                vector.len()
-                            )
-                        })),
-                    )
-                        .into_response();
+                        "embedding_dim_mismatch",
+                        format!(
+                            "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                            name,
+                            embed_cfg.dim,
+                            vector.len()
+                        ),
+                    );
                 }
 
                 updated.insert("vector".to_string(), json!(vector));
@@ -1214,13 +1177,11 @@ pub async fn update_row(
     {
         chunk_table_name = Some(chunking::chunk_table_name(&name));
         if state.gemini_api_key.trim().is_empty() {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": "Missing GEMINI_API_KEY. Set it on the API server to update embedded fields."
-                })),
-            )
-                .into_response();
+                "missing_gemini_api_key",
+                "Missing GEMINI_API_KEY. Set it on the API server to update embedded fields.",
+            );
         }
 
         let combined = chunking::build_combined_embed_text(
@@ -1234,9 +1195,10 @@ pub async fn update_row(
             let embeddings = generate_embeddings(&chunks, &embed_cfg.model, &state.gemini_api_key)
                 .await
                 .map_err(|e| {
-                    (
+                    api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": format!("Embedding failed: {}", e) })),
+                        "embedding_failed",
+                        format!("Embedding failed: {}", e),
                     )
                 });
             let embeddings = match embeddings {
@@ -1245,34 +1207,30 @@ pub async fn update_row(
             };
 
             if embeddings.len() != chunks.len() {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": format!(
-                            "Embedding provider returned {} vectors for {} inputs",
-                            embeddings.len(),
-                            chunks.len()
-                        )
-                    })),
-                )
-                    .into_response();
+                    "embedding_count_mismatch",
+                    format!(
+                        "Embedding provider returned {} vectors for {} inputs",
+                        embeddings.len(),
+                        chunks.len()
+                    ),
+                );
             }
 
             for (ordinal, chunk_text) in chunks.into_iter().enumerate() {
                 let vector = &embeddings[ordinal];
                 if vector.len() != embed_cfg.dim as usize {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "error": format!(
-                                "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
-                                name,
-                                embed_cfg.dim,
-                                vector.len()
-                            )
-                        })),
-                    )
-                        .into_response();
+                        "embedding_dim_mismatch",
+                        format!(
+                            "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                            name,
+                            embed_cfg.dim,
+                            vector.len()
+                        ),
+                    );
                 }
                 chunk_rows.push(json!({
                     "chunk_id": chunking::chunk_id(&id, ordinal),
@@ -1291,11 +1249,11 @@ pub async fn update_row(
         match crate::sync::arrow_schema_for_table(&table_spec, resolved_embedding.as_ref()) {
             Ok(schema) => Arc::new(schema),
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to build Arrow schema: {}", e) })),
-                )
-                    .into_response();
+                    "arrow_schema_build_failed",
+                    format!("Failed to build Arrow schema: {}", e),
+                );
             }
         };
 
@@ -1305,11 +1263,11 @@ pub async fn update_row(
         match arrow_json::ReaderBuilder::new(arrow_schema.clone()).build(json_lines.as_bytes()) {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("JSON to Arrow reader failed: {}", e) })),
-                )
-                    .into_response();
+                    "json_to_arrow_reader_failed",
+                    format!("JSON to Arrow reader failed: {}", e),
+                );
             }
         };
 
@@ -1317,11 +1275,11 @@ pub async fn update_row(
     let batches = match batches_result {
         Ok(v) => v,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("JSON to Arrow conversion failed: {}", e) })),
-            )
-                .into_response();
+                "json_to_arrow_failed",
+                format!("JSON to Arrow conversion failed: {}", e),
+            );
         }
     };
 
@@ -1333,20 +1291,20 @@ pub async fn update_row(
     let merge_result = match merge_insert.execute(Box::new(reader)).await {
         Ok(r) => r,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Update failed: {}", e) })),
-            )
-                .into_response();
+                "update_failed",
+                format!("Update failed: {}", e),
+            );
         }
     };
 
     if merge_result.num_updated_rows == 0 {
-        return (
+        return api_error(
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": format!("Row \"{}\" not found in table \"{}\"", id, name) })),
-        )
-            .into_response();
+            "row_not_found",
+            format!("Row \"{}\" not found in table \"{}\"", id, name),
+        );
     }
 
     // 8. Rewrite chunks (best-effort) if enabled.
@@ -1359,30 +1317,28 @@ pub async fn update_row(
                 let Some((_table_spec, resolved_embedding, _schema_version)) =
                     get_registry_entry(&state.db, &name).await
                 else {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(
-                            json!({ "error": "Missing schema registry entry during chunk write" }),
-                        ),
-                    )
-                        .into_response();
+                        "missing_registry_entry",
+                        "Missing schema registry entry during chunk write",
+                    );
                 };
                 let Some(embed_cfg) = resolved_embedding.as_ref() else {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": "Missing embedding config during chunk write" })),
-                    )
-                        .into_response();
+                        "missing_embedding_config",
+                        "Missing embedding config during chunk write",
+                    );
                 };
 
                 let chunk_schema = match chunking::arrow_schema_for_chunk_table(embed_cfg) {
                     Ok(s) => Arc::new(s),
                     Err(e) => {
-                        return (
+                        return api_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({ "error": e })),
-                        )
-                            .into_response();
+                            "chunk_schema_build_failed",
+                            e,
+                        );
                     }
                 };
 
@@ -1397,37 +1353,33 @@ pub async fn update_row(
                 {
                     Ok(v) => v,
                     Err(e) => {
-                        return (
+                        return api_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({
-                                "error": format!("Chunk JSON to Arrow reader failed: {}", e)
-                            })),
-                        )
-                            .into_response();
+                            "chunk_json_to_arrow_reader_failed",
+                            format!("Chunk JSON to Arrow reader failed: {}", e),
+                        );
                     }
                 };
                 let batches_result: Result<Vec<_>, _> = decoder.collect();
                 let batches = match batches_result {
                     Ok(v) => v,
                     Err(e) => {
-                        return (
+                        return api_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({
-                                "error": format!("Chunk JSON to Arrow conversion failed: {}", e)
-                            })),
-                        )
-                            .into_response();
+                            "chunk_json_to_arrow_failed",
+                            format!("Chunk JSON to Arrow conversion failed: {}", e),
+                        );
                     }
                 };
 
                 let reader =
                     RecordBatchIterator::new(batches.into_iter().map(Ok), chunk_schema.clone());
                 if let Err(e) = t_chunks.add(Box::new(reader)).execute().await {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": format!("Chunk insert failed: {}", e) })),
-                    )
-                        .into_response();
+                        "chunk_insert_failed",
+                        format!("Chunk insert failed: {}", e),
+                    );
                 }
             }
         }
@@ -1466,12 +1418,10 @@ fn build_full_row_from_existing(
                 } else {
                     return Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "error": format!(
-                                "Stored row is missing required column \"{}\"",
-                                col_name
-                            )
-                        })),
+                        Json(json!(ApiErrorResponse::new(
+                            "stored_row_missing_column",
+                            format!("Stored row is missing required column \"{}\"", col_name),
+                        ))),
                     ));
                 }
             }
@@ -1502,30 +1452,31 @@ async fn flush_row_vectors_batch(
     let embeddings = generate_embeddings(&inputs, &ctx.embed_cfg.model, &ctx.state.gemini_api_key)
         .await
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Embedding failed: {}", e) })),
+                "embedding_failed",
+                format!("Embedding failed: {}", e),
             )
         })?;
 
     if embeddings.len() != batch.len() {
-        return Err((
+        return Err(api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": format!(
-                    "Embedding provider returned {} vectors for {} inputs",
-                    embeddings.len(),
-                    batch.len()
-                )
-            })),
+            "embedding_count_mismatch",
+            format!(
+                "Embedding provider returned {} vectors for {} inputs",
+                embeddings.len(),
+                batch.len()
+            ),
         ));
     }
 
     let arrow_schema = crate::sync::arrow_schema_for_table(ctx.table_spec, Some(ctx.embed_cfg))
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to build Arrow schema: {}", e) })),
+                "arrow_schema_build_failed",
+                format!("Failed to build Arrow schema: {}", e),
             )
         })?;
     let arrow_schema = Arc::new(arrow_schema);
@@ -1535,16 +1486,15 @@ async fn flush_row_vectors_batch(
     for (i, (_id, mut full_row, _text)) in batch.drain(..).enumerate() {
         let vector = &embeddings[i];
         if vector.len() != ctx.embed_cfg.dim as usize {
-            return Err((
+            return Err(api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": format!(
-                        "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
-                        ctx.table_name,
-                        ctx.embed_cfg.dim,
-                        vector.len()
-                    )
-                })),
+                "embedding_dim_mismatch",
+                format!(
+                    "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                    ctx.table_name,
+                    ctx.embed_cfg.dim,
+                    vector.len()
+                ),
             ));
         }
         full_row.insert("vector".to_string(), json!(vector));
@@ -1555,16 +1505,18 @@ async fn flush_row_vectors_batch(
     let decoder = arrow_json::ReaderBuilder::new(arrow_schema.clone())
         .build(json_lines.as_bytes())
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("JSON to Arrow reader failed: {}", e) })),
+                "json_to_arrow_reader_failed",
+                format!("JSON to Arrow reader failed: {}", e),
             )
         })?;
 
     let batches = decoder.collect::<Result<Vec<_>, _>>().map_err(|e| {
-        (
+        api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("JSON to Arrow conversion failed: {}", e) })),
+            "json_to_arrow_failed",
+            format!("JSON to Arrow conversion failed: {}", e),
         )
     })?;
 
@@ -1573,9 +1525,10 @@ async fn flush_row_vectors_batch(
     merge_insert.when_matched_update_all(None);
     merge_insert.when_not_matched_insert_all();
     let r = merge_insert.execute(Box::new(reader)).await.map_err(|e| {
-        (
+        api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": format!("Reindex write failed: {}", e) })),
+            "reindex_write_failed",
+            format!("Reindex write failed: {}", e),
         )
     })?;
 
@@ -1606,31 +1559,32 @@ async fn rebuild_chunks_for_parent(
     let embeddings = generate_embeddings(&chunks, &embed_cfg.model, &state.gemini_api_key)
         .await
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Embedding failed: {}", e) })),
+                "embedding_failed",
+                format!("Embedding failed: {}", e),
             )
         })?;
 
     if embeddings.len() != chunks.len() {
-        return Err((
+        return Err(api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": format!(
-                    "Embedding provider returned {} vectors for {} inputs",
-                    embeddings.len(),
-                    chunks.len()
-                )
-            })),
+            "embedding_count_mismatch",
+            format!(
+                "Embedding provider returned {} vectors for {} inputs",
+                embeddings.len(),
+                chunks.len()
+            ),
         ));
     }
 
     let chunk_schema = chunking::arrow_schema_for_chunk_table(embed_cfg)
         .map(Arc::new)
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e })),
+                "chunk_schema_build_failed",
+                e,
             )
         })?;
     let t_chunks = state
@@ -1639,14 +1593,13 @@ async fn rebuild_chunks_for_parent(
         .execute()
         .await
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": format!(
-                        "Chunk table \"{}\" does not exist. Run `vexi sync` first. ({})",
-                        chunk_table, e
-                    )
-                })),
+                "chunk_table_missing",
+                format!(
+                    "Chunk table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                    chunk_table, e
+                ),
             )
         })?;
 
@@ -1658,16 +1611,15 @@ async fn rebuild_chunks_for_parent(
     for (ordinal, chunk_text) in chunks.into_iter().enumerate() {
         let vector = &embeddings[ordinal];
         if vector.len() != embed_cfg.dim as usize {
-            return Err((
+            return Err(api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": format!(
-                        "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
-                        table_name,
-                        embed_cfg.dim,
-                        vector.len()
-                    )
-                })),
+                "embedding_dim_mismatch",
+                format!(
+                    "Embedding dimension mismatch for table \"{}\": expected {} but got {}. Set VEXI_VECTOR_DIM to match your embedding model.",
+                    table_name,
+                    embed_cfg.dim,
+                    vector.len()
+                ),
             ));
         }
 
@@ -1686,17 +1638,17 @@ async fn rebuild_chunks_for_parent(
     let decoder = arrow_json::ReaderBuilder::new(chunk_schema.clone())
         .build(json_lines.as_bytes())
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Chunk JSON to Arrow reader failed: {}", e) })),
+                "chunk_json_to_arrow_reader_failed",
+                format!("Chunk JSON to Arrow reader failed: {}", e),
             )
         })?;
     let batches = decoder.collect::<Result<Vec<_>, _>>().map_err(|e| {
-        (
+        api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": format!("Chunk JSON to Arrow conversion failed: {}", e)
-            })),
+            "chunk_json_to_arrow_failed",
+            format!("Chunk JSON to Arrow conversion failed: {}", e),
         )
     })?;
 
@@ -1706,9 +1658,10 @@ async fn rebuild_chunks_for_parent(
         .execute()
         .await
         .map_err(|e| {
-            (
+            api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Chunk insert failed: {}", e) })),
+                "chunk_insert_failed",
+                format!("Chunk insert failed: {}", e),
             )
         })?;
 
@@ -1727,50 +1680,44 @@ pub async fn reindex_table(
     let Some((table_spec, resolved_embedding, _schema_version)) =
         get_registry_entry(&state.db, &name).await
     else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": format!("Unknown table \"{}\". Run `vexi sync` first.", name) })),
-        )
-            .into_response();
+            "unknown_table",
+            format!("Unknown table \"{}\". Run `vexi sync` first.", name),
+        );
     };
 
     let Some(embed_cfg) = resolved_embedding.as_ref() else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": format!(
-                    "Table \"{}\" has no embedded fields. Add .embed() to at least one string column and run `vexi sync`.",
-                    name
-                )
-            })),
-        )
-            .into_response();
+            "no_embedded_fields",
+            format!(
+                "Table \"{}\" has no embedded fields. Add .embed() to at least one string column and run `vexi sync`.",
+                name
+            ),
+        );
     };
 
     if state.gemini_api_key.trim().is_empty() {
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": "Missing GEMINI_API_KEY. Set it on the API server to enable reindex."
-            })),
-        )
-            .into_response();
+            "missing_gemini_api_key",
+            "Missing GEMINI_API_KEY. Set it on the API server to enable reindex.",
+        );
     }
 
     // 2. Open base table.
     let t_base = match state.db.open_table(&name).execute().await {
         Ok(v) => v,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": format!(
-                        "Table \"{}\" does not exist. Run `vexi sync` first. ({})",
-                        name, e
-                    )
-                })),
-            )
-                .into_response();
+                "table_missing",
+                format!(
+                    "Table \"{}\" does not exist. Run `vexi sync` first. ({})",
+                    name, e
+                ),
+            );
         }
     };
 
@@ -1788,49 +1735,43 @@ pub async fn reindex_table(
         let chunk_table = chunking::chunk_table_name(&name);
         // Ensure it exists.
         if state.db.open_table(&chunk_table).execute().await.is_err() {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": format!(
-                        "Chunk table \"{}\" does not exist. Run `vexi sync` first.",
-                        chunk_table
-                    )
-                })),
-            )
-                .into_response();
+                "chunk_table_missing",
+                format!(
+                    "Chunk table \"{}\" does not exist. Run `vexi sync` first.",
+                    chunk_table
+                ),
+            );
         }
 
         // Full scan, then per-row rebuild. (v1: simple, safe, no concurrency.)
         let stream = match t_base.query().execute().await {
             Ok(s) => s,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to scan table: {}", e) })),
-                )
-                    .into_response();
+                    "scan_failed",
+                    format!("Failed to scan table: {}", e),
+                );
             }
         };
 
         let batches = match stream.try_collect::<Vec<_>>().await {
             Ok(v) => v,
             Err(e) => {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": format!("Failed to read scan stream: {}", e) })),
-                )
-                    .into_response();
+                    "scan_stream_failed",
+                    format!("Failed to read scan stream: {}", e),
+                );
             }
         };
 
         let rows = match record_batches_to_json_rows(&batches) {
             Ok(v) => v,
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e })),
-                )
-                    .into_response();
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "arrow_to_json_failed", e);
             }
         };
 
@@ -1839,20 +1780,16 @@ pub async fn reindex_table(
             let existing_obj = match json_row_as_object(&row) {
                 Ok(v) => v,
                 Err(e) => {
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": e })),
-                    )
-                        .into_response();
+                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, "invalid_row", e);
                 }
             };
 
             let Some(id) = existing_obj.get("id").and_then(|v| v.as_str()) else {
-                return (
+                return api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": "Stored row is missing id" })),
-                )
-                    .into_response();
+                    "stored_row_missing_id",
+                    "Stored row is missing id",
+                );
             };
 
             let full_row = match build_full_row_from_existing(&table_spec, id, existing_obj) {
@@ -1893,33 +1830,29 @@ pub async fn reindex_table(
     let stream = match t_base.query().execute().await {
         Ok(s) => s,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to scan table: {}", e) })),
-            )
-                .into_response();
+                "scan_failed",
+                format!("Failed to scan table: {}", e),
+            );
         }
     };
 
     let batches = match stream.try_collect::<Vec<_>>().await {
         Ok(v) => v,
         Err(e) => {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": format!("Failed to read scan stream: {}", e) })),
-            )
-                .into_response();
+                "scan_stream_failed",
+                format!("Failed to read scan stream: {}", e),
+            );
         }
     };
 
     let rows = match record_batches_to_json_rows(&batches) {
         Ok(v) => v,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e })),
-            )
-                .into_response();
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, "arrow_to_json_failed", e);
         }
     };
 
@@ -1937,20 +1870,16 @@ pub async fn reindex_table(
         let existing_obj = match json_row_as_object(&row) {
             Ok(v) => v,
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": e })),
-                )
-                    .into_response();
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "invalid_row", e);
             }
         };
 
         let Some(id) = existing_obj.get("id").and_then(|v| v.as_str()) else {
-            return (
+            return api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Stored row is missing id" })),
-            )
-                .into_response();
+                "stored_row_missing_id",
+                "Stored row is missing id",
+            );
         };
 
         let full_row = match build_full_row_from_existing(&table_spec, id, existing_obj) {
@@ -1969,13 +1898,11 @@ pub async fn reindex_table(
                 match crate::sync::arrow_schema_for_table(&table_spec, Some(embed_cfg)) {
                     Ok(s) => Arc::new(s),
                     Err(e) => {
-                        return (
+                        return api_error(
                             StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(
-                                json!({ "error": format!("Failed to build Arrow schema: {}", e) }),
-                            ),
-                        )
-                            .into_response();
+                            "arrow_schema_build_failed",
+                            format!("Failed to build Arrow schema: {}", e),
+                        );
                     }
                 };
 
@@ -1988,21 +1915,21 @@ pub async fn reindex_table(
             {
                 Ok(v) => v,
                 Err(e) => {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": format!("JSON to Arrow reader failed: {}", e) })),
-                    )
-                        .into_response();
+                        "json_to_arrow_reader_failed",
+                        format!("JSON to Arrow reader failed: {}", e),
+                    );
                 }
             };
             let batches = match decoder.collect::<Result<Vec<_>, _>>() {
                 Ok(v) => v,
                 Err(e) => {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": format!("JSON to Arrow conversion failed: {}", e) })),
-                    )
-                        .into_response();
+                        "json_to_arrow_failed",
+                        format!("JSON to Arrow conversion failed: {}", e),
+                    );
                 }
             };
             let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), arrow_schema);
@@ -2012,11 +1939,11 @@ pub async fn reindex_table(
             let r = match merge_insert.execute(Box::new(reader)).await {
                 Ok(v) => v,
                 Err(e) => {
-                    return (
+                    return api_error(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "error": format!("Reindex write failed: {}", e) })),
-                    )
-                        .into_response();
+                        "reindex_write_failed",
+                        format!("Reindex write failed: {}", e),
+                    );
                 }
             };
             stats.rows_updated += (r.num_updated_rows as usize) + (r.num_inserted_rows as usize);
