@@ -31,11 +31,11 @@ This repo is a monorepo:
 
 ```mermaid
 flowchart LR
-  schema[schema.ts] -->|vexi sync| api[API: POST /sync]
-  api --> registry[_vexi_schema_registry]
-  app[Node app] -->|insert / update / search| api
-  api --> lancedb[LanceDB (.lancedb)]
-  api -->|embed| gemini[Gemini embeddings]
+  schema["schema.ts"] -->|vexi sync| api["API: POST /sync"]
+  api --> registry["_vexi_schema_registry"]
+  app["Node app"] -->|insert / update / search| api
+  api --> lancedb["LanceDB (.lancedb)"]
+  api -->|embed| gemini["Gemini embeddings"]
   lancedb --> api --> app
 ```
 
