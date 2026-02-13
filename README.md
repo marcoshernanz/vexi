@@ -1,140 +1,178 @@
 # Vexi
 
-**Vexi** is a lightweight, developer-friendly database toolkit for Node.js. It provides a convention-based workflow to define schemas in TypeScript, automatically sync them to a local Vector DB (LanceDB) via a dedicated API, and interact with your data using a fully type-safe client.
+[![CI](https://github.com/marcoshernanz/vexi/actions/workflows/ci.yml/badge.svg)](https://github.com/marcoshernanz/vexi/actions/workflows/ci.yml)
 
-## Core Concepts
+Vexi is a local-first RAG database you drive from TypeScript.
 
-*   **Schema-First**: Define your tables in TypeScript.
-*   **Auto-Sync**: Push your schema changes to the database with a single CLI command.
-*   **Vector-Ready**: Built on top of LanceDB, ready for vector search and standard queries.
-*   **Type-Safe**: Use your schema definitions to get instant autocomplete and type checking in your client code.
+- Define tables in `schema.ts` with a small Zod-like DSL.
+- Run `vexi sync` to apply additive migrations and register the schema.
+- Use a fully type-safe client (`insert`, `update`, `search`) while the Rust API handles storage (LanceDB) and embeddings (Gemini).
 
----
+Highlights:
 
-## Getting Started
+- Type-safe `db.<table>.insert/update/search` derived from your schema.
+- Server-side validation (schema registry is the contract; no inference on write).
+- Automatic embeddings on write and query (Gemini v1).
+- Additive-only migrations + explicit `reindex` for embedding changes.
+- Chunking strategy support (`recursive-markdown`) for long-form text.
 
-### 1. Installation
+Why this exists:
 
-(Coming soon: `npm install vexi`)
+- RAG apps often accumulate glue code: schema drift, ad-hoc migrations, hand-rolled embedding pipelines.
+- Vexi makes schema + validation + embeddings a single contract you can `sync` and then rely on.
 
-For now, ensure you have the `api` and `sdk` folders in your workspace.
+This repo is a monorepo:
 
-### 2. Start the API Server
+- `sdk/` TypeScript SDK + `vexi` CLI
+- `api/` Rust HTTP API (Axum) + LanceDB
+- `example-app/` minimal consumer
 
-The Vexi API sits between your application and the database (stored locally in `.lancedb`).
+## How It Works
 
-```bash
-cd api
-npm install
-npm run dev
+```mermaid
+flowchart LR
+  schema[schema.ts] -->|vexi sync| api[API: POST /sync]
+  api --> registry[_vexi_schema_registry]
+  app[Node app] -->|insert / update / search| api
+  api --> lancedb[LanceDB (.lancedb)]
+  api -->|embed| gemini[Gemini embeddings]
+  lancedb --> api --> app
 ```
 
-The server will start on `http://localhost:3000`.
+## Design Constraints (v1)
 
----
+- Schema registry is the contract (server validates writes; no schema inference).
+- Migrations are additive-only.
+- Embeddings provider is Gemini only.
+- No backward compatibility (v1-only endpoints + CLI).
 
-## usage
+## Quickstart (run the demo)
 
-### 1. Define Your Schema
+Prereqs: Node.js 18+ and Rust.
 
-Create a file named `schema.ts` in the root of your project. This is where you define your data model.
+Terminal A (API):
 
-```typescript
-import { defineTable, v } from "./sdk/src/index"; // Adjust path to SDK
+```bash
+cd sdk
+npm ci
+npm run build
 
-export const users = defineTable({
-  id: v.number(),
-  username: v.string(),
+cd ../api
+cp .env.example .env
+# set GEMINI_API_KEY in api/.env
+cargo run
+```
+
+Terminal B (client + schema sync):
+
+```bash
+cd example-app
+npm ci
+npm run sync
+npm run start
+```
+
+Notes:
+
+- `GEMINI_API_KEY` is required for embeddings/search/reindex (the API can start without it, but search will fail).
+- If you see a vector dimension error, set `VEXI_VECTOR_DIM` (default `768`).
+
+## Schema + Client (what usage looks like)
+
+`schema.ts`
+
+```ts
+import { createTable, v } from "vexi";
+
+export const users = createTable({
+  name: v.string().embed(),
+  bio: v.optional(v.string().embed({ strategy: "recursive-markdown" })),
   isActive: v.boolean(),
-  bio: v.optional(v.string())
-});
-
-export const products = defineTable({
-  sku: v.string(),
-  price: v.number(),
-  inStock: v.boolean()
 });
 ```
 
-**Supported Fields:**
-*   `v.string()`
-*   `v.number()`
-*   `v.boolean()`
-*   `v.optional(...)`
+`main.ts` (NodeNext/ESM: note the `.js` extension on local imports)
 
-### 2. Sync Schema to Database
+```ts
+import { createClient } from "vexi";
+import { users } from "./schema.js";
 
-Once your `schema.ts` is ready, run the sync command. This reads your TypeScript file, validates strict types, and creates the corresponding tables in the LanceDB database.
+const db = createClient({
+  schema: { users },
+  config: { baseUrl: "http://localhost:3000" },
+});
+
+const inserted = await db.users.insert({ name: "Alice", isActive: true });
+await db.users.update(inserted.id, { isActive: false });
+
+const results = await db.users.search("Alice", { topK: 5 });
+console.log(results);
+```
+
+## CLI
+
+Sync schema (one-shot):
 
 ```bash
-# Run from your project root
-npx vexi sync
+npx vexi sync --schema ./schema.ts --url http://localhost:3000
 ```
 
-*Note: If running locally during development, you might use:*
+Reindex (backfill vectors after changing embedding config/model/strategy):
+
 ```bash
-node sdk/dist/cli.js sync
+npx vexi reindex users --url http://localhost:3000
 ```
 
-You should see output indicating that tables were successfully created.
+## Docs
 
-### 3. Initialize the Client
+- `PROJECT.md` (product + API philosophy)
+- `STATUS.md` (what v1 does today)
 
-Use the `createClient` function to interact with your data. Pass in your schema definitions to unlock full type safety.
+## HTTP API (v1)
 
-**`main.ts`**
+- `GET /health`
+- `POST /sync`
+- `POST /tables/{name}/insert`
+- `PATCH /tables/{name}/{id}`
+- `POST /tables/{name}/search`
+- `POST /tables/{name}/reindex`
 
-```typescript
-import { createClient } from "./sdk/src/client";
-import { users, products } from "./schema"; // Import your table definitions
+Error shape (all non-2xx):
 
-// Initialize with your tables
-const db = createClient(
-  { users, products }, 
-  {
-    baseUrl: "http://localhost:3000",
-    apiKey: "dev" // Placeholder for future auth
-  }
-);
-
-async function run() {
-  // 1. Insert Data
-  // TypeScript will enforce that 'sku' is a string and 'price' is a number!
-  await db.products.insert({
-    sku: "ABC-123",
-    price: 99.99,
-    inStock: true
-  });
-
-  // 2. Search Data
-  const results = await db.products.search("ABC-123");
-  console.log("Found products:", results);
-}
-
-run();
+```json
+{ "error": { "code": "...", "message": "...", "details": {} } }
 ```
 
----
+Insert response shape:
 
-## API Reference
+```json
+{ "ok": true, "rows": [{ "id": "...", "...": "..." }] }
+```
 
-### `defineTable(fields)`
-Helper to create strict table definitions.
-*   `fields`: An object where keys are column names and values are Vexi field types.
+Search response shape:
 
-### `v` (Field Builder)
-*   `v.string()`: UTF-8 String.
-*   `v.number()`: Double precision Float (Apache Arrow Float64).
-*   `v.boolean()`: Boolean value.
-*   `v.optional(T)`: Marks a field as nullable/optional.
+```json
+{ "ok": true, "results": [{ "score": 0.123, "item": { "id": "..." } }] }
+```
 
-### CLI Commands
-*   `vexi sync`: Looks for `schema.ts` in the current directory and pushes changes to the API.
+## Configuration
 
----
+API env vars:
 
-## Architecture
+- `GEMINI_API_KEY` (required for embeddings/search/reindex)
+- `VEXI_VECTOR_DIM` (default `768`)
+- `LANCEDB_URI` (default `.lancedb`)
+- `VEXI_DEBUG=1` (enables `GET /registry`)
 
-*   **API**: Fastify server handling HTTP requests and managing the LanceDB instance.
-*   **SDK**: TypeScript library providing the `v` builder, types, and the `vexi` CLI.
-*   **Database**: LanceDB (embedded vector database), storing data in `.lancedb/`.
+## Limitations (intentional for v1)
+
+- No auth / multi-tenant model.
+- No destructive migrations (type changes, column removal).
+- Local-first (LanceDB on disk).
+
+## Development
+
+```bash
+cd sdk && npm run lint && npm run build
+cd api && cargo fmt && cargo clippy -- -D warnings
+```

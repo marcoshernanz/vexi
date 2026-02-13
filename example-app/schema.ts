@@ -1,20 +1,13 @@
-// In a real app, this would be: import { defineTable, v } from "vexi";
-import { defineTable, v } from "../sdk/src/index.js";
+import { createTable, v } from "vexi";
 
-export const users = defineTable({
-  id: v.number(),
-  name: v.string().embed(), // Default embedding
-  bio: v.optional(
-    v.string().embed({
-      model: "openai/text-embedding-3-small",
-      strategy: "recursive-markdown",
-    }),
-  ),
+export const users = createTable({
+  name: v.string().embed(), // default model: models/text-embedding-004
+  bio: v.optional(v.string().embed({ strategy: "recursive-markdown" })),
   email: v.optional(v.string()),
   isActive: v.boolean(),
 });
 
-export const products = defineTable({
+export const products = createTable({
   sku: v.string(),
   name: v.string().embed(),
   description: v.string().embed(),

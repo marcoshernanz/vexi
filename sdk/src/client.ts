@@ -1,40 +1,76 @@
-import { type Infer, type TableDefinition } from "./schema.js";
+import {
+  type InsertInput,
+  type Row,
+  type SearchResult,
+  type Table,
+  type TableDefinition,
+  type UpdatePatch,
+} from "./schema.js";
 
 /**
  * Configuration options for the Vexi client.
  */
 export type ClientConfig = {
-  apiKey: string;
+  /**
+   * API key used for authentication.
+   *
+   * v1: the server may ignore this, but we keep it in the client surface so we don't
+   * have to introduce a breaking change once auth lands.
+   */
+  apiKey?: string;
+  /**
+   * Base URL for the Vexi API server.
+   *
+   * Example: `http://localhost:3000`
+   */
   baseUrl: string;
 };
 
 /**
- * Interface for database operations on a specific table.
- * @template Def The definition of the table structure.
+ * Operations available on a specific table.
+ *
+ * @template TTable - The table type created by `createTable(...)`.
  */
-export type TableClient<Def extends TableDefinition> = {
+export type TableClient<TTable extends Table<TableDefinition>> = {
   /**
-   * Insert a new record or multiple records into the table.
-   * @param data The record(s) to insert, matching the table schema.
+   * Insert one or many records.
+   *
+   * The server generates an `id: string` for each inserted row.
    */
-  insert: (data: Infer<Def> | Infer<Def>[]) => Promise<void>;
+  insert(data: InsertInput<TTable>): Promise<Row<TTable>>;
+  insert(data: InsertInput<TTable>[]): Promise<Row<TTable>[]>;
 
   /**
-   * Search for records in the table.
-   * @param query The search query string.
-   * @returns A promise resolving to an array of matching records.
+   * Update an existing record by implicit id.
    */
-  search: (query: string) => Promise<Infer<Def>[]>;
+  update: (id: string, patch: UpdatePatch<TTable>) => Promise<Row<TTable>>;
+
+  /**
+   * Perform a vector search.
+   */
+  search: (
+    query: string,
+    options?: {
+      topK?: number;
+    },
+  ) => Promise<SearchResult<TTable>[]>;
 };
 
 /**
- * Definition of the entire database schema, mapping table names to their definitions.
+ * Database schema definition passed to `createClient`.
+ *
+ * @example
+ * ```ts
+ * const db = createClient({
+ *   schema: { users, products },
+ *   config: { baseUrl: "http://localhost:3000", apiKey: "dev" },
+ * });
+ * ```
  */
-export type DatabaseDefinition = Record<string, TableDefinition>;
+export type DatabaseDefinition = Record<string, Table<TableDefinition>>;
 
 /**
- * The main Vexi client interface.
- * Maps every table name in the DB definition to a TableClient for that table.
+ * The main Vexi client type.
  */
 export type VexiClient<DB extends DatabaseDefinition> = {
   [TableName in keyof DB]: TableClient<DB[TableName]>;
@@ -45,7 +81,7 @@ export type VexiClient<DB extends DatabaseDefinition> = {
  */
 export type CreateClientOptions<DB extends DatabaseDefinition> = {
   /**
-   * The database schema definition.
+   * Database schema definition.
    */
   schema: DB;
   /**
@@ -54,51 +90,232 @@ export type CreateClientOptions<DB extends DatabaseDefinition> = {
   config: ClientConfig;
 };
 
+type ErrorBody = {
+  error?:
+    | string
+    | {
+        code?: string;
+        message?: string;
+        details?: unknown;
+      };
+};
+
+function getErrorMessage(error: ErrorBody["error"]): string | undefined {
+  if (!error) {
+    return undefined;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  const maybeMessage = (error as { message?: unknown }).message;
+  if (typeof maybeMessage === "string" && maybeMessage.trim() !== "") {
+    return maybeMessage;
+  }
+  return undefined;
+}
+
+type InsertResponseBody = {
+  ok?: boolean;
+  rows?: unknown;
+  error?: string;
+};
+
+type SearchResponseBody = {
+  ok?: boolean;
+  results?: unknown;
+  error?: string;
+};
+
+type UpdateResponseBody = {
+  ok?: boolean;
+  row?: unknown;
+  error?: string;
+};
+
+async function readErrorBody(response: Response): Promise<ErrorBody> {
+  return (await response.json().catch(() => ({}))) as ErrorBody;
+}
+
 /**
  * Creates a strongly-typed Vexi client.
  *
- * @param options - Configuration options containing the schema and client config.
- * @returns A proxy object that handles database operations.
+ * The returned object is a Proxy that lets you write `db.users.insert(...)` without
+ * generating code for every table.
  */
 export function createClient<DB extends DatabaseDefinition>(
   options: CreateClientOptions<DB>,
 ): VexiClient<DB> {
-  const { schema: _schema, config } = options;
+  const { schema, config } = options;
+  const tableNames = new Set(Object.keys(schema));
+
   return new Proxy(
     {},
     {
       get: (_target, tableNameProp) => {
         const tableName = String(tableNameProp);
-        return {
-          insert: async (data: Infer<DB[keyof DB]> | Infer<DB[keyof DB]>[]) => {
-            const records = Array.isArray(data) ? data : [data];
+
+        // Help developers catch typos early.
+        if (!tableNames.has(tableName)) {
+          throw new Error(
+            `Unknown table "${tableName}". Did you forget to include it in createClient({ schema: ... })?`,
+          );
+        }
+
+        type AnyTable = Table<TableDefinition>;
+        type AnyInsertInput = InsertInput<AnyTable>;
+        type AnyRow = Row<AnyTable>;
+
+        function insert(data: AnyInsertInput): Promise<AnyRow>;
+        function insert(data: AnyInsertInput[]): Promise<AnyRow[]>;
+        async function insert(
+          data: AnyInsertInput | AnyInsertInput[],
+        ): Promise<AnyRow | AnyRow[]> {
+          const wasArray = Array.isArray(data);
+          const records = wasArray ? data : [data];
+          const response = await fetch(
+            `${config.baseUrl}/tables/${tableName}/insert`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+              },
+              body: JSON.stringify({ records }),
+            },
+          );
+
+            if (!response.ok) {
+              const errorBody = await readErrorBody(response);
+              throw new Error(
+                `Insert failed for "${tableName}": ${getErrorMessage(errorBody.error) ?? response.statusText}`,
+              );
+            }
+
+          const body = (await response
+            .json()
+            .catch(() => ({}))) as InsertResponseBody;
+
+          if (!body.ok) {
+            throw new Error(
+              `Insert failed for "${tableName}": ${body.error ?? response.statusText}`,
+            );
+          }
+
+          if (!Array.isArray(body.rows)) {
+            throw new Error(
+              `Insert failed for "${tableName}": response missing rows`,
+            );
+          }
+
+          const rows = body.rows as Row<Table<TableDefinition>>[];
+          if (rows.length !== records.length) {
+            throw new Error(
+              `Insert failed for "${tableName}": expected ${String(records.length)} row(s) but got ${String(rows.length)}`,
+            );
+          }
+
+          if (!wasArray && rows.length === 0) {
+            throw new Error(
+              `Insert failed for "${tableName}": response returned 0 rows`,
+            );
+          }
+
+          if (wasArray) {
+            return rows;
+          }
+          return rows[0] as AnyRow;
+        }
+
+        const tableClient: TableClient<Table<TableDefinition>> = {
+          insert,
+
+          update: async (id, patch) => {
             const response = await fetch(
-              `${config.baseUrl}/tables/${tableName}/insert`,
+              `${config.baseUrl}/tables/${tableName}/${id}`,
               {
-                method: "POST",
+                method: "PATCH",
                 headers: {
                   "Content-Type": "application/json",
-                  Authorization: `Bearer ${config.apiKey}`,
+                  ...(config.apiKey
+                    ? { Authorization: `Bearer ${config.apiKey}` }
+                    : {}),
                 },
-                body: JSON.stringify(records),
+                body: JSON.stringify(patch),
               },
             );
 
             if (!response.ok) {
-              const errorBody = (await response.json().catch(() => ({}))) as {
-                error?: string;
-              };
+              const errorBody = await readErrorBody(response);
               throw new Error(
-                `Insert failed: ${errorBody.error ?? response.statusText}`,
+                `Update failed for "${tableName}": ${getErrorMessage(errorBody.error) ?? response.statusText}`,
               );
             }
+
+            const body = (await response
+              .json()
+              .catch(() => ({}))) as UpdateResponseBody;
+
+            if (!body.ok) {
+              throw new Error(
+                `Update failed for "${tableName}": ${body.error ?? response.statusText}`,
+              );
+            }
+
+            if (!body.row || typeof body.row !== "object" || Array.isArray(body.row)) {
+              throw new Error(
+                `Update failed for "${tableName}": response missing row`,
+              );
+            }
+
+            return body.row as Row<Table<TableDefinition>>;
           },
 
-          search: async (_query: string) => {
-            // TODO: Implement search logic using config.baseUrl and config.apiKey
-            // console.log(`Searching in ${tableName} for "${query}"`);
+          search: async (query, options) => {
+            const response = await fetch(
+              `${config.baseUrl}/tables/${tableName}/search`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(config.apiKey
+                    ? { Authorization: `Bearer ${config.apiKey}` }
+                    : {}),
+                },
+                body: JSON.stringify({
+                  query,
+                  topK: options?.topK,
+                }),
+              },
+            );
+
+            if (!response.ok) {
+              const errorBody = await readErrorBody(response);
+              throw new Error(
+                `Search failed for "${tableName}": ${getErrorMessage(errorBody.error) ?? response.statusText}`,
+              );
+            }
+
+            const body = (await response
+              .json()
+              .catch(() => ({}))) as SearchResponseBody;
+
+            if (!body.ok) {
+              throw new Error(
+                `Search failed for "${tableName}": ${body.error ?? response.statusText}`,
+              );
+            }
+
+            if (!Array.isArray(body.results)) {
+              throw new Error(
+                `Search failed for "${tableName}": response missing results`,
+              );
+            }
+
+            return body.results as SearchResult<Table<TableDefinition>>[];
           },
         };
+
+        return tableClient;
       },
     },
   ) as VexiClient<DB>;

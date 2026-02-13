@@ -3,5 +3,6 @@
 - [ ] InferType or v.infer?
 - [ ] tsx without npx (in server - npm run dev)
 - [ ] LanceDB stored in docker
-- [ ] API with /tables to pass all tables directly?
+- [ ] API sync endpoint is `POST /sync` (no legacy /tables).
 - [ ] Handle database migration
+- [ ] Add `.env.example` files and ignore `.env`

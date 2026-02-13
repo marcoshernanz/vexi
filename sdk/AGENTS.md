@@ -86,8 +86,7 @@ Adhere strictly to these conventions to maintain the codebase's quality and styl
 
 - **Strict Mode**: The project runs with `"strict": true` and `"noUncheckedIndexedAccess": true`. Handle `undefined` checks explicitly.
 - **Type Definitions**:
-  - Use `interface` for public APIs and extensible structures.
-  - Use `type` for unions, intersections, and mapped types.
+  - ALWAYS use `type` aliases. Do not use `interface`.
 - **Prettify Helper**: Use the `Prettify<T>` helper type when creating complex intersection/mapped types to ensure tooltips in IDEs are readable.
   ```typescript
   export type Prettify<T> = {
@@ -124,7 +123,7 @@ export function createClient(...) { ... }
 ### 4.1 Schema Definition
 
 - The SDK uses a "schema-first" approach.
-- Tables are defined using `defineTable` and fields using `v` (from `fields.js`).
+- Tables are defined using `createTable` and fields using `v` (from `fields.js`).
 - Types are inferred from these runtime definitions.
 
 ### 4.2 Proxy Pattern
