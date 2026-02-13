@@ -106,6 +106,12 @@ type SearchResponseBody = {
   error?: string;
 };
 
+type UpdateResponseBody = {
+  ok?: boolean;
+  row?: unknown;
+  error?: string;
+};
+
 async function readErrorBody(response: Response): Promise<ErrorBody> {
   return (await response.json().catch(() => ({}))) as ErrorBody;
 }
@@ -203,10 +209,45 @@ export function createClient<DB extends DatabaseDefinition>(
         const tableClient: TableClient<Table<TableDefinition>> = {
           insert,
 
-          update: (_id, _patch) => {
-            return Promise.reject(
-              new Error(`Update is not implemented yet for "${tableName}".`),
+          update: async (id, patch) => {
+            const response = await fetch(
+              `${config.baseUrl}/tables/${tableName}/${id}`,
+              {
+                method: "PATCH",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(config.apiKey
+                    ? { Authorization: `Bearer ${config.apiKey}` }
+                    : {}),
+                },
+                body: JSON.stringify(patch),
+              },
             );
+
+            if (!response.ok) {
+              const errorBody = await readErrorBody(response);
+              throw new Error(
+                `Update failed for "${tableName}": ${errorBody.error ?? response.statusText}`,
+              );
+            }
+
+            const body = (await response
+              .json()
+              .catch(() => ({}))) as UpdateResponseBody;
+
+            if (!body.ok) {
+              throw new Error(
+                `Update failed for "${tableName}": ${body.error ?? response.statusText}`,
+              );
+            }
+
+            if (!body.row || typeof body.row !== "object" || Array.isArray(body.row)) {
+              throw new Error(
+                `Update failed for "${tableName}": response missing row`,
+              );
+            }
+
+            return body.row as Row<Table<TableDefinition>>;
           },
 
           search: async (query, options) => {

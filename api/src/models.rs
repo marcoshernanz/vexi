@@ -18,6 +18,19 @@ pub struct InsertRequest {
     pub records: Vec<Value>,
 }
 
+/// Partial update payload for a row.
+///
+/// This is the request body for `PATCH /tables/{name}/{id}`.
+pub type UpdatePatch = BTreeMap<String, Value>;
+
+/// Response body for row updates.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateResponse {
+    pub ok: bool,
+    pub row: Value,
+}
+
 /// Request body for vector search.
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

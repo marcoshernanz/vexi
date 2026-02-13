@@ -18,6 +18,13 @@ Last updated: 2026-02-12
   - if embedding fields exist + `GEMINI_API_KEY` is set, computes a single per-row `vector`
   - writes to LanceDB using Arrow schema derived from the synced spec (no inference)
 
+- `PATCH /tables/{name}/{id}`:
+  - validates patch keys/types against the synced registry
+  - rejects patching reserved `id` and `vector`
+  - fetches the existing row by id, applies patch, validates final row
+  - if embedded fields are updated, recomputes embeddings (requires `GEMINI_API_KEY`)
+  - persists via LanceDB `merge_insert` (update-only; no insert-on-miss)
+
 ## Embeddings
 
 - Provider: Gemini API (v1beta)
@@ -41,3 +48,7 @@ Last updated: 2026-02-12
 - Implemented `POST /tables/{name}/search` (API) and `db.<table>.search()` (SDK).
 - Vector search uses LanceDB `nearest_to(...)` and expects a `vector: FixedSizeList<Float32, DIM>` column.
 - DIM is configured via `VEXI_VECTOR_DIM` (default 768). Existing tables created before this change may need a fresh `.lancedb` or a migration.
+
+## Update v1 status
+
+- Implemented `PATCH /tables/{name}/{id}` (API) and `db.<table>.update(id, patch)` (SDK).
