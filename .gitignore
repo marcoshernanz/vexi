@@ -4,3 +4,13 @@
 
 # Local environment files
 **/.env
+**/.env.*
+!**/.env.example
+
+# OS / editor
+.DS_Store
+
+# Dependencies and build outputs
+**/node_modules/
+**/dist/
+**/*.tsbuildinfo
