@@ -3,10 +3,12 @@
   "type": "module",
   "scripts": {
     "sync": "node ../sdk/dist/cli.js sync",
+    "reindex": "node ../sdk/dist/cli.js reindex",
     "start": "npx tsx main.ts"
   },
   "dependencies": {
-    "tsx": "^4.19.0",
-    "typescript": "^5.0.0"
+    "vexi": "file:../sdk",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
   }
 }

@@ -1,14 +1,8 @@
-// In a real app, this would be: import { createTable, v } from "vexi";
-import { createTable, v } from "../sdk/src/index.js";
+import { createTable, v } from "vexi";
 
 export const users = createTable({
-  name: v.string().embed(), // Default embedding
-  bio: v.optional(
-    v.string().embed({
-      model: "models/text-embedding-004",
-      strategy: "recursive-markdown",
-    }),
-  ),
+  name: v.string().embed(), // default model: models/text-embedding-004
+  bio: v.optional(v.string().embed({ strategy: "recursive-markdown" })),
   email: v.optional(v.string()),
   isActive: v.boolean(),
 });

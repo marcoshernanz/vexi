@@ -45,7 +45,7 @@ Last updated: 2026-02-12
 ## Next steps
 
 - Remove remaining legacy/back-compat references in docs/plans (`PLAN.md`, `PROJECT.md`, `README.md`).
-- Add search endpoint(s) and SDK search once insert+sync are stable.
+- Polish `example-app` to demonstrate sync/insert/update/search/reindex with consumer-style imports.
 - Improve reindex ergonomics (progress output, better scan batching) if needed.
 
 ## Search v1 status

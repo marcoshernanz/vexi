@@ -1,5 +1,4 @@
-// In a real app, this would be: import { createClient } from "vexi/client";
-import { createClient } from "../sdk/src/index.js";
+import { createClient } from "vexi";
 import { users, products } from "./schema.js";
 
 const db = createClient({
@@ -11,7 +10,7 @@ const db = createClient({
 });
 
 async function main() {
-  console.log("🚀 Vexi Client Initialized");
+  console.log("Vexi client initialized");
   console.log("Defined tables:", Object.keys({ users, products }));
 
   // This code is type-checked!
@@ -21,8 +20,15 @@ async function main() {
   const insertedUser = await db.users.insert({
     name: "Alice",
     isActive: true,
+    bio: "# About\n\nAlice likes databases.\n\n## Notes\n\n- Writes docs\n- Builds tools\n",
   });
   console.log("Inserted user:", insertedUser);
+
+  const updatedUser = await db.users.update(insertedUser.id, {
+    isActive: false,
+    bio: "# About\n\nAlice likes databases and now ships v1.\n",
+  });
+  console.log("Updated user:", updatedUser);
 
   // Batch insert products
   const insertedProducts = await db.products.insert([
@@ -49,8 +55,19 @@ async function main() {
   ]);
   console.log("Inserted products:", insertedProducts);
 
-  const results = await db.users.search("Alice");
-  console.log("Search Results:", results);
+  const results = await db.users.search("Alice", { topK: 5 });
+  console.log("Search results:");
+  for (const r of results) {
+    const name = "name" in r.item ? r.item.name : undefined;
+    console.log(
+      `- score=${String(r.score)} id=${r.item.id} name=${name ? String(name) : "(missing)"}`,
+    );
+  }
+
+  console.log("\nIf you changed embedding config/model/strategy, run:");
+  console.log("- npm run reindex");
+
+  console.log("\nAPI requires GEMINI_API_KEY for embeddings/search/reindex.");
 }
 
 main().catch(console.error);

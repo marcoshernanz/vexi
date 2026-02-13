@@ -10,7 +10,7 @@ The backend is a Rust server (Axum) that owns storage + embedding generation. De
 - End-to-end type safety: the same schema definition drives client-side types and server-side validation.
 - One-command schema sync/migrations: `npx vexi sync`.
 - Automatic embeddings on write and on query.
-- Pluggable embedding providers: users can bring any model/provider.
+- Embeddings provider: Gemini only (v1).
 
 ## Developer Workflow
 

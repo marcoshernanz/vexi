@@ -5,4 +5,4 @@
 - [ ] LanceDB stored in docker
 - [ ] API sync endpoint is `POST /sync` (no legacy /tables).
 - [ ] Handle database migration
-- [ ] .env
+- [ ] Add `.env.example` files and ignore `.env`

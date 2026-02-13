@@ -1,3 +1,6 @@
 .vscode/
 .lancedb/
 **/.lancedb/
+
+# Local environment files
+**/.env
