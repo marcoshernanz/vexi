@@ -6,7 +6,7 @@ mod models;
 mod sync;
 
 use crate::handlers::{
-    health_check, insert_data, list_registry, search_table, sync_tables, update_row,
+    health_check, insert_data, list_registry, reindex_table, search_table, sync_tables, update_row,
 };
 use crate::models::AppState;
 use axum::{
@@ -53,6 +53,7 @@ async fn main() {
         .route("/sync", post(sync_tables))
         .route("/tables/{name}/insert", post(insert_data))
         .route("/tables/{name}/search", post(search_table))
+        .route("/tables/{name}/reindex", post(reindex_table))
         .route("/tables/{name}/{id}", axum::routing::patch(update_row));
 
     if env::var("VEXI_DEBUG").ok().as_deref() == Some("1") {

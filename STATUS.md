@@ -25,6 +25,11 @@ Last updated: 2026-02-12
   - if embedded fields are updated, recomputes embeddings (requires `GEMINI_API_KEY`)
   - persists via LanceDB `merge_insert` (update-only; no insert-on-miss)
 
+- `POST /tables/{name}/reindex`:
+  - requires `GEMINI_API_KEY`
+  - recomputes embeddings for all rows using the current schema registry embedding config
+  - if `strategy: "recursive-markdown"`, rebuilds chunk rows in `_vexi_chunks_<table>`
+
 ## Embeddings
 
 - Provider: Gemini API (v1beta)
@@ -41,7 +46,7 @@ Last updated: 2026-02-12
 
 - Remove remaining legacy/back-compat references in docs/plans (`PLAN.md`, `PROJECT.md`, `README.md`).
 - Add search endpoint(s) and SDK search once insert+sync are stable.
-- Consider reindex workflow for embedding config changes.
+- Improve reindex ergonomics (progress output, better scan batching) if needed.
 
 ## Search v1 status
 

@@ -55,6 +55,31 @@ pub struct SearchResponse {
     pub results: Vec<SearchResultItem>,
 }
 
+/// Request body for reindexing a table.
+///
+/// v1: `POST /tables/{name}/reindex`
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ReindexRequest {
+    /// Optional batch size for embedding calls.
+    ///
+    /// If unset, the server uses a conservative default.
+    pub embed_batch_size: Option<usize>,
+}
+
+/// Response body for table reindexing.
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReindexResponse {
+    pub ok: bool,
+    pub table: String,
+    pub rows_scanned: usize,
+    pub rows_updated: usize,
+    pub vectors_written: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunks_written: Option<usize>,
+}
+
 /// A supported column kind in the v1 schema JSON.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
