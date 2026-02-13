@@ -1,3 +1,4 @@
+mod chunking;
 mod db;
 mod embeddings;
 mod handlers;

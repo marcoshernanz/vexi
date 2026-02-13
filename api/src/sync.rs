@@ -1,3 +1,4 @@
+use crate::chunking;
 use crate::db::{
     ensure_schema_registry, get_registry_entry, list_registry_tables, put_registry_entry,
 };
@@ -404,6 +405,24 @@ async fn sync_one_table(
             (SyncActionKind::Created, None)
         }
     };
+
+    // If chunking is enabled, ensure chunk table exists.
+    if let Some(embed_cfg) = resolved_embedding.as_ref()
+        && embed_cfg.strategy.as_deref() == Some("recursive-markdown")
+    {
+        let chunk_table = chunking::chunk_table_name(table_name);
+        let chunk_schema = Arc::new(chunking::arrow_schema_for_chunk_table(embed_cfg)?);
+
+        // v1: create chunk table if missing. We don't migrate it yet.
+        if state.db.open_table(&chunk_table).execute().await.is_err() {
+            state
+                .db
+                .create_empty_table(&chunk_table, chunk_schema)
+                .execute()
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
     // Prepare registry update but don't write yet (write only if all tables succeed).
     let next_version = prev_version + 1;

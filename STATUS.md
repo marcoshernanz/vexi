@@ -49,6 +49,11 @@ Last updated: 2026-02-12
 - Vector search uses LanceDB `nearest_to(...)` and expects a `vector: FixedSizeList<Float32, DIM>` column.
 - DIM is configured via `VEXI_VECTOR_DIM` (default 768). Existing tables created before this change may need a fresh `.lancedb` or a migration.
 
+## Chunking v1 status (optional)
+
+- Strategy `recursive-markdown` creates a chunk table `_vexi_chunks_<table>` during sync.
+- Inserts/updates embed chunks and search uses the chunk table, then hydrates parent rows.
+
 ## Update v1 status
 
 - Implemented `PATCH /tables/{name}/{id}` (API) and `db.<table>.update(id, patch)` (SDK).
